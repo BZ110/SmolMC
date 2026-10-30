@@ -1,6 +1,6 @@
 # 13 — Practical roadmap: defer the ambitious parts
 
-**Authorization (2026-10-29): M2A is accepted following user-reported successful real Minecraft 26.3 client verification. M2B ONLY is explicitly authorized, including implementation, performance/resource measurements, regression and feasible Linux validation, documentation and rollback. M2B is now implemented and validated below. M2C and all later stages remain unauthorized.** Milestone gates are unchanged.
+**Authorization (2026-10-29): M1A–M2B and the focused replication optimization (`d881fe3`) are complete. The user explicitly authorizes M2C ONLY: optional Java SDK/bridge, real integration/failure tests, short measurements, full regression and feasible Linux validation, ADR/report/commit. Stop before M3.** Milestone gates are unchanged.
 
 ## R0 — Research, architecture, constraints (current deliverable)
 Artifacts: source inventory, protocol guide, decisions, feature model, Java SDK contract, benchmarks, risk register. **Gate:** agree on what defines M1 connectivity and version target.
@@ -40,7 +40,7 @@ limited to buried Air/Stone overrides; no surface or arbitrary-template editing.
 The user reports all requested real 26.3 client tests passed and explicitly accepts
 M2A; [user evidence](../evidence/m2a-stock-client-user-verification.json) records
 the specific two-world isolation/relog observations and their provenance.
-M2B only is now authorized; stop before M2C.
+This records historical M2A acceptance; current M2C authorization is above.
 
 ## M2B — Shared templates and resource profiles (implemented and validated)
 Concepts: immutable chunks + sparse overlays, clone/reset, parked idle state, world budgets, feature resolver and metrics. **Gate:** tracked incremental RAM/timer work and correctness under high churn; publish real measurements.
@@ -55,10 +55,18 @@ COW clone sharing/divergence, creation/reset latency, retained charges, RSS/CPU/
 threads and 34,000 lifecycle cycles are measured. Four protocol clients verify
 cloned-world edit isolation; the opt-in dense active/churn probe passes separately.
 No world-owned worker/timer, Java, plugin, survival or persistence system is added.
-**Stop after M2B; M2C and later require new explicit authorization.**
+This is historical M2B completion; current M2C authorization is recorded above.
 
-## M2C — Java SDK bridge (future)
+## M2C — Java SDK bridge (implemented and validated)
 Concepts: sidecar launch/attach, API semantic version, world/player/command APIs, batched edits, event bus. **Gate:** developer writes a tiny Java minigame without Rust changes; bridge-off uses no JVM.
+
+**Evidence:** [M2C report](M2C_ENGINEERING_REPORT.md), [bridge/SDK contract](M2C_BRIDGE_CONTRACT.md),
+[ADR-008](../decisions/ADR-008-m2c-optional-java-ipc.md) and the compiling
+[Java minigame](../java/examples/TinyArena.java). Optional authenticated local IPC,
+launch/attach, semantic SDK version, typed lifecycle/player/command controls,
+transactional edits, read-only events and bounded failure isolation. Rust-only,
+real Java, encrypted Play and Linux evidence are recorded in the report. No M3
+plugin loading/permissions framework or later gameplay capabilities. Stop here.
 
 ## M3 — Polished plugin/dev ecosystem (future)
 Commands, permissions, Javadocs, plugin lifecycle, structured config, errors, scheduling, debugger/telemetry, examples; compatibility matrix. **Gate:** at least three independently written small plugins (chat/staff, arena manager, creative block editor) work without touching core.

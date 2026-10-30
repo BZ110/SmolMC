@@ -121,6 +121,7 @@ struct Observation {
     entities: HashMap<i32, [u8; 16]>,
     blocks: HashMap<[i32; 3], i32>,
     chats: Vec<String>,
+    system_messages: Vec<String>,
     chunks: usize,
     unloads: usize,
     teleports: usize,
@@ -189,6 +190,7 @@ async fn pump(
     let mut info = HashSet::new();
     let mut entities = HashMap::new();
     let mut ticks = 0u64;
+    let mut command_sent = false;
     let mut interval = tokio::time::interval(Duration::from_millis(50));
     interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
     loop {
@@ -218,6 +220,41 @@ async fn pump(
         let mut r = Reader::new(&packet);
         let id = r.varint().map_err(malformed)?;
         match id {
+            0x0f => {
+                // Independent bounded command-tree decoder in the private client.
+                let n = r.varint().unwrap();
+                assert!((1..=129).contains(&n));
+                let mut arena = false;
+                for _ in 0..n {
+                    let flags = r.byte().unwrap();
+                    let children = r.varint().unwrap();
+                    assert!((0..=64).contains(&children));
+                    for _ in 0..children {
+                        let child = r.varint().unwrap();
+                        assert!((0..n).contains(&child));
+                    }
+                    match flags {
+                        0 => {}
+                        5 => {
+                            arena |= r.string(32).unwrap() == "arena";
+                        }
+                        6 => {
+                            assert_eq!(r.string(32).unwrap(), "args");
+                            assert_eq!(r.varint().unwrap(), 5);
+                            assert_eq!(r.varint().unwrap(), 2);
+                        }
+                        _ => panic!("invalid command flags"),
+                    }
+                }
+                assert_eq!(r.varint().unwrap(), 0);
+                r.finish().unwrap();
+                if arena && !command_sent {
+                    command_sent = true;
+                    let mut command = login::Encoder::new(7);
+                    command.string("arena b");
+                    connection.outbound.send(&command.finish()).await?;
+                }
+            }
             0x49 => {
                 let teleport_id = r.varint().unwrap();
                 observation.lock().unwrap().teleports += 1;
@@ -352,12 +389,15 @@ async fn pump(
                 let len = u16::from_be_bytes(r.take(2).unwrap().try_into().unwrap());
                 let text = r.take(len as usize).unwrap();
                 assert!(text.starts_with(b"[System"));
+                let mut observation = observation.lock().unwrap();
                 if text.starts_with(b"[System relay]") {
                     stats.chats += 1;
                     observation
-                        .lock()
-                        .unwrap()
                         .chats
+                        .push(String::from_utf8(text.to_vec()).unwrap());
+                } else {
+                    observation
+                        .system_messages
                         .push(String::from_utf8(text.to_vec()).unwrap());
                 }
                 assert!(!r.boolean().unwrap());
@@ -419,6 +459,16 @@ async fn active_play_resource_probe() {
             .parse()
             .unwrap();
         let server = Server::partitioned(worlds).await;
+        let bridge = std::env::var("SMOLMC_PROBE_BRIDGE_DIRECTORY")
+            .ok()
+            .map(|path| {
+                crate::java_bridge_fixture::Bridge::start(
+                    Arc::clone(&server.service),
+                    std::path::Path::new(&path),
+                    crate::java_bridge_fixture::Access::Control,
+                )
+                .unwrap()
+            });
         std::fs::write(
             &ready,
             serde_json::json!({"address":server.address.to_string(),"pid":std::process::id()})
@@ -438,6 +488,9 @@ async fn active_play_resource_probe() {
                     std::fs::write(&temporary,value.to_string()).unwrap();std::fs::rename(temporary,path).unwrap();
                 }
             }
+        }
+        if let Some(bridge) = bridge {
+            bridge.shutdown().await.unwrap();
         }
         let (s, n) = server.stop().await;
         std::fs::write(
@@ -656,4 +709,72 @@ async fn m2b_cloned_worlds_replay_shared_edits_then_diverge_on_the_wire() {
         ),
         (0, 0, 0, 0, 0)
     );
+}
+
+/// The exact production bridge source is linked only into this private fixture,
+/// against cfg(test) Service, so no offline authentication API enters the binary.
+#[tokio::test]
+#[ignore = "requires compiled Java SDK; scripts/java-check.sh then explicit invocation"]
+async fn java_sidecar_controls_real_encrypted_play() {
+    let server = Server::partitioned(2).await;
+    let directory = std::env::temp_dir().join(format!("smc-java-{}", std::process::id()));
+    let bridge = crate::java_bridge_fixture::Bridge::start(
+        Arc::clone(&server.service),
+        &directory,
+        crate::java_bridge_fixture::Access::Control,
+    )
+    .unwrap();
+    let a = Client::start(server.address, false, false).await;
+    let b = Client::start(server.address, false, false).await;
+    assert!(a.observe().entities.is_empty() && b.observe().entities.is_empty());
+    let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
+    let mut java = std::process::Command::new("java")
+        .arg("-ea")
+        .arg("-cp")
+        .arg(root.join("target/java/classes"))
+        .arg("dev.smolmc.PlayerIntegration")
+        .arg(&directory)
+        .spawn()
+        .unwrap();
+    let status = timeout(Duration::from_secs(20), async {
+        loop {
+            if let Some(status) = java.try_wait().unwrap() {
+                break status;
+            }
+            tokio::time::sleep(Duration::from_millis(20)).await;
+        }
+    })
+    .await
+    .unwrap();
+    assert!(status.success());
+    assert!(
+        server.service.metrics.snapshot().movements >= 60,
+        "moving players progress during Java event flood"
+    );
+    a.wait(|o| {
+        o.teleports >= 2
+            && o.entities.contains_key(&2)
+            && o.system_messages
+                .iter()
+                .any(|m| m.contains("Java arena message"))
+            && o.blocks.get(&[8, 62, 8]) == Some(&0)
+    })
+    .await;
+    b.wait(|o| {
+        o.entities.contains_key(&1)
+            && o.system_messages
+                .iter()
+                .any(|m| m.contains("Java arena message"))
+            && o.blocks.get(&[8, 62, 8]) == Some(&0)
+    })
+    .await;
+    assert!(a.observe().unloads >= 25);
+    a.stop().await;
+    b.stop().await;
+    bridge.shutdown().await.unwrap();
+    assert!(!directory.exists());
+    let (s, n) = server.stop().await;
+    assert_eq!(s.active_replicas, 0);
+    assert_eq!(n.active, 0);
+    assert_eq!(n.protocol_errors, 0);
 }

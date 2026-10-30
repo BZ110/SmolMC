@@ -766,6 +766,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "smolmc-bridge"
+version = "0.1.0"
+dependencies = [
+ "openssl",
+ "smolmc-sessions",
+ "smolmc-world",
+ "tokio",
+ "zeroize",
+]
+
+[[package]]
 name = "smolmc-chunks"
 version = "0.1.0"
 dependencies = [
@@ -797,6 +808,7 @@ dependencies = [
 name = "smolmc-server"
 version = "0.1.0"
 dependencies = [
+ "smolmc-bridge",
  "smolmc-network",
  "smolmc-sessions",
  "tokio",
@@ -807,6 +819,7 @@ name = "smolmc-sessions"
 version = "0.1.0"
 dependencies = [
  "flate2",
+ "openssl",
  "serde_json",
  "smolmc-auth",
  "smolmc-chunks",
@@ -814,6 +827,7 @@ dependencies = [
  "smolmc-protocol-777",
  "smolmc-world",
  "tokio",
+ "zeroize",
 ]
 
 [[package]]

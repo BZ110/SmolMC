@@ -5,8 +5,9 @@ shared templates/terrain/registries, sparse chunk COW snapshots, clone/reset/par
 validated profiles/budgets and retained-memory metrics. See
 [ADR-006](../decisions/ADR-006-m2b-shared-cow-overlays-and-budgets.md) and
 [the M2B report](M2B_ENGINEERING_REPORT.md). The diagram remains the long-term
-proposal: no simulation workers, Java/plugin bridge, persistence or survival.
-M2C and later remain unauthorized.
+proposal: no simulation workers, persistence or survival. M2C adds an optional bounded local
+Java control bridge ([ADR-008](../decisions/ADR-008-m2c-optional-java-ipc.md)); no
+plugin host or M3 system. Current authority is in AGENTS.md.
 
 ## High-level ownership tree
 

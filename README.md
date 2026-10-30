@@ -1,6 +1,6 @@
 # SmolMC
 
-Rust Minecraft Java Edition **26.3 / protocol 777**, implemented through **M2B**:
+Rust Minecraft Java Edition **26.3 / protocol 777**, implemented through **M2C**:
 isolated worlds sharing immutable stone/registries, sparse COW snapshots, cheap
 clones/reset, profiles/budgets and event-driven idle lifecycle. See the
 [M2B engineering report](docs/M2B_ENGINEERING_REPORT.md) for acceptance and measurements.
@@ -9,10 +9,11 @@ M2A was accepted after user-reported real stock-client verification. M2B retains
 that protocol path and adds automated cloned-world isolation checks; no new stock
 rendering or real-account capacity claim. Player block interactions remain
 read-only; trusted Rust controls can edit buried Air/Stone blocks only.
-Inventory actions (including F/off-hand swap), commands and most gameplay are
-unsupported and may disconnect. No signed-player-chat verification is claimed.
+Inventory actions (including F/off-hand swap), signed commands and most gameplay
+are unsupported and may disconnect. The optional bridge supports bounded unsigned
+literal commands. No signed-player-chat verification is claimed.
 
-**M2B is implemented and validated. M2C and all later milestones are unauthorized.**
+**M2C is implemented and validated; evidence is recorded in the [M2C report](docs/M2C_ENGINEERING_REPORT.md). Stop before M3.**
 See [AGENTS.md](AGENTS.md), [the roadmap](docs/13_ROADMAP.md),
 [ADR-006](decisions/ADR-006-m2b-shared-cow-overlays-and-budgets.md) and the
 [accepted M2A checkpoint/report](docs/M2A_ENGINEERING_REPORT.md).
@@ -20,8 +21,8 @@ See [AGENTS.md](AGENTS.md), [the roadmap](docs/13_ROADMAP.md),
 A focused replication optimization followed M2B: bounded write batching and wake/
 allocation reductions lower CPU while preserving update rates and isolation.
 See [short before/after measurements and limits](docs/REPLICATION_CPU_REPORT.md)
-and [ADR-007](decisions/ADR-007-bounded-replication-write-batches.md). M2C remains
-unauthorized.
+and [ADR-007](decisions/ADR-007-bounded-replication-write-batches.md). These optimizations
+remain intact through M2C.
 
 ## Build and run
 
@@ -40,7 +41,8 @@ target/release/smolmc
 
 The existing project-local toolchain can be used with `scripts/cargo-local.sh`
 in place of `cargo`; it does not modify shell profiles. `Cargo.lock` pins the
-dependency graph. The server never launches or requires a JVM.
+dependency graph. The Rust server never launches or requires a JVM. An explicitly started Java
+application can launch/attach through the optional M2C local control bridge.
 
 Add **127.0.0.1:25565** in the stock 26.3 client's Multiplayer list. Status and
 ping work. Joining requires the client's legitimate signed-in account. There
@@ -59,6 +61,31 @@ and joins connection tasks, waits for bounded RSA work, checks resource leases,
 and prints counters. Opt-in connection tracing logs IDs and phase/packet metadata,
 never keys, tokens or payloads. Keep tracing off for ordinary load measurements.
 
+## Optional Java SDK (M2C)
+
+Java **17+**, SDK **0.1.0**, Unix socket schema **1.0**. Bridge-off starts no JVM,
+listener, event bus or per-player Java queue. Enabling the bridge adds no Rust
+thread or world tick. Java remains a separate process; its memory is reported
+separately (not hidden in Rust RSS). No Bukkit/Paper plugin compatibility or plugin
+loader is implemented.
+
+```sh
+# The directory must be new; default access is observe. Enable control explicitly.
+target/release/smolmc --bridge-dir /tmp/smolmc-ipc-new --bridge-access control
+scripts/java-check.sh
+java -cp target/java/classes TinyArena target/release/smolmc
+```
+
+[Typed SDK source](java/sdk/src/main/java/dev/smolmc/MinecraftRustServer.java),
+[tiny guessing-game example](java/examples/TinyArena.java),
+[wire/API/security/backpressure contract](docs/M2C_BRIDGE_CONTRACT.md),
+[ADR-008](decisions/ADR-008-m2c-optional-java-ipc.md) and
+[measurements/regressions/rollback](docs/M2C_ENGINEERING_REPORT.md).
+The example launches its own Rust child on a free loopback port; read its private
+log directory for the game address. `/arena guess N` wins a round by guessing 1..10
+and moves the winner to a separate lobby. `/arena a` rejoins. Worlds reset only
+when empty; buried edits and fixed spawn transfers retain existing M2B limits.
+
 ## Responsibilities and limits
 
 | Crate | Responsibility |
@@ -69,6 +96,7 @@ never keys, tokens or payloads. Keep tracing off for ordinary load measurements.
 | `world` | Materials/geometry plus explicit template/instance identities, bounded edits and lifecycle |
 | `chunks` | Shared stone chunk body and coordinate serialization |
 | `sessions` | Protocol phases, identity/world leases, trusted lifecycle controls, shared terrain, per-world replication and switching |
+| `bridge` | Optional versioned authenticated Unix IPC, bounded control requests and events |
 | `server` | Thin assembly root, runtime limits, CLI and shutdown |
 
 A lifecycle manager owns distinct worlds over the shared immutable stone template.
@@ -81,7 +109,8 @@ occupied reset/destroy are rejected. Reset reuses identity with a new generation
 `--world-profile editable|read-only` defaults to editable, preserving M2A's trusted
 buried edits. Required protocol/presence/chat capabilities remain on; unavailable
 physics/mob/persistence/Java capabilities fail explicitly. Parked worlds own no
-watch channel; terrain watches are created only while occupied. No network admin endpoint or player commands are added.
+terrain watch channel; terrain watches are created only while occupied. An authenticated local control listener and literal commands are available only
+with the explicitly enabled bridge.
 Edits are ephemeral Air/Stone overrides only at `-64 <= y < 63`, at most 65,536 per
 world, preserving the intact roof/heightmaps/lighting. Surface editing is unsupported.
 

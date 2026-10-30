@@ -10,6 +10,12 @@ use smolmc_world::{
     ChunkPos, Dimension, MIN_Y, Material, SPAWN, SURFACE, TemplateId, TemplateSignature,
     WorldError, WorldHandle, WorldId, WorldManager,
 };
+pub mod control;
+#[cfg(all(test, unix))]
+extern crate self as smolmc_sessions;
+#[cfg(all(test, unix))]
+#[path = "../../bridge/src/lib.rs"]
+mod java_bridge_fixture;
 #[cfg(all(test, unix))]
 mod m1d_probe;
 #[cfg(test)]
@@ -366,7 +372,7 @@ impl Service {
             .map_err(|e| io::Error::other(format!("world bootstrap failed: {e:?}")))?;
         Ok((worlds, seed))
     }
-    /// Trusted in-process control API; no network admin endpoint or player command.
+    /// Trusted in-process control API; the optional bridge applies its own authorization.
     pub fn default_world(&self) -> Result<WorldHandle, WorldError> {
         self.worlds.handle(self.seed)
     }
@@ -416,6 +422,50 @@ impl Service {
     }
     pub fn world_overlay_memory(&self) -> smolmc_world::OverlayMemory {
         self.worlds.memory()
+    }
+    /// Only the explicit bridge startup constructs event/callback resources.
+    pub fn enable_control(&self) -> Result<(), control::ControlError> {
+        self.worlds.enable_control()
+    }
+    pub fn server_id(&self) -> [u8; 16] {
+        self.protocol_session
+    }
+    pub fn control_events(
+        &self,
+    ) -> Result<tokio::sync::broadcast::Receiver<Arc<control::ControlEvent>>, control::ControlError>
+    {
+        self.worlds.events()
+    }
+    pub fn list_worlds(&self) -> Vec<WorldHandle> {
+        self.worlds.list()
+    }
+    pub fn read_blocks(
+        &self,
+        world: WorldHandle,
+        positions: &[[i32; 3]],
+    ) -> Result<Vec<Material>, WorldError> {
+        self.worlds.read(world, positions)
+    }
+    pub fn list_players(&self) -> Vec<control::PlayerSnapshot> {
+        self.worlds.players()
+    }
+    pub fn control_player(
+        &self,
+        entity: i32,
+        uuid: [u8; 16],
+        target: Option<WorldHandle>,
+        message: Option<String>,
+    ) -> Result<(), control::ControlError> {
+        self.worlds.control_player(entity, uuid, target, message)
+    }
+    pub fn register_command(&self, owner: u64, name: &str) -> Result<(), control::ControlError> {
+        self.worlds.register_command(owner, name)
+    }
+    pub fn unregister_commands(&self, owner: u64, name: Option<&str>) {
+        self.worlds.unregister_commands(owner, name)
+    }
+    pub fn invoke_command(&self, command: &str) -> Result<(), control::ControlError> {
+        self.worlds.invoke_command(None, command)
     }
     pub fn registry_bytes(&self) -> usize {
         self.registries.encoded_bytes
@@ -705,13 +755,18 @@ impl Service {
         let mut player = player::Player::new(Instant::now());
         let mut membership = self
             .worlds
-            .attach(
+            .attach_profile(
                 entity,
                 self.worlds
                     .handle(instance)
                     .map_err(|_| invalid("unknown world"))?,
+                Some(Arc::clone(&profile)),
             )
             .map_err(|_| invalid("world membership rejected"))?;
+        if let Some(commands) = membership.commands.as_mut() {
+            let names = commands.borrow_and_update().clone();
+            deadline(5, connection.outbound.send(&play::commands(&names))).await?;
+        }
         let mut terrain = membership.terrain.borrow_and_update().clone();
         let mut teleport_id = 1i32;
         for packet in [
@@ -905,6 +960,12 @@ impl Service {
             }
             let packet = tokio::select! {
                 _=tokio::time::sleep_until(due)=>continue,
+                names=command_change(&mut membership.commands)=>{
+                    deadline(5,connection.outbound.send(&play::commands(&names?))).await?;continue;
+                },
+                message=control_message(&mut membership.messages)=>{
+                    deadline(5,connection.outbound.send(&presence::system(&format!("[System] {}",message?)).map_err(malformed)?)).await?;continue;
+                },
                 changed=membership.target.changed()=>{changed.map_err(|_| invalid("world control closed"))?;continue;},
                 changed=membership.terrain.changed()=>{changed.map_err(|_| invalid("world terrain closed"))?;continue;},
                 _=wake.notified(),if !viewer_dirty=>{viewer_dirty=true;continue;},
@@ -937,6 +998,19 @@ impl Service {
                 malformed(error)
             })?;
             match event {
+                play::Event::Command(command) => {
+                    player.admit_chat(now)?;
+                    if self.worlds.invoke_command(Some(entity), &command).is_err() {
+                        deadline(
+                            5,
+                            connection.outbound.send(
+                                &presence::system("[System] Command unavailable.")
+                                    .map_err(malformed)?,
+                            ),
+                        )
+                        .await?;
+                    }
+                }
                 play::Event::Teleport {
                     id,
                     position,
@@ -1055,6 +1129,32 @@ fn material_state(material: Material) -> i32 {
     match material {
         Material::Air => 0,
         Material::Stone => 1,
+    }
+}
+
+// Disabled bridge branches never wake or allocate a channel/cache.
+async fn command_change(
+    receiver: &mut Option<tokio::sync::watch::Receiver<Arc<[String]>>>,
+) -> io::Result<Arc<[String]>> {
+    match receiver {
+        Some(rx) => {
+            rx.changed()
+                .await
+                .map_err(|_| invalid("command control closed"))?;
+            Ok(rx.borrow_and_update().clone())
+        }
+        None => std::future::pending().await,
+    }
+}
+async fn control_message(
+    receiver: &mut Option<tokio::sync::mpsc::Receiver<String>>,
+) -> io::Result<String> {
+    match receiver {
+        Some(rx) => rx
+            .recv()
+            .await
+            .ok_or_else(|| invalid("message control closed")),
+        None => std::future::pending().await,
     }
 }
 

@@ -1,5 +1,5 @@
 [workspace]
-members = ["crates/protocol-777", "crates/network", "crates/auth", "crates/world", "crates/chunks", "crates/sessions", "crates/server"]
+members = ["crates/protocol-777", "crates/network", "crates/auth", "crates/world", "crates/chunks", "crates/sessions", "crates/server", "crates/bridge"]
 resolver = "3"
 
 [workspace.package]
@@ -21,6 +21,7 @@ smolmc-auth = { path = "crates/auth" }
 smolmc-sessions = { path = "crates/sessions" }
 smolmc-world = { path = "crates/world" }
 smolmc-chunks = { path = "crates/chunks" }
+smolmc-bridge = { path = "crates/bridge" }
 
 [workspace.lints.rust]
 unsafe_code = "forbid"

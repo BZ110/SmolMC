@@ -1,0 +1,16 @@
+[package]
+name = "smolmc-bridge"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+publish.workspace = true
+
+[dependencies]
+smolmc-sessions.workspace = true
+smolmc-world.workspace = true
+tokio.workspace = true
+openssl.workspace = true
+zeroize.workspace = true
+
+[lints]
+workspace = true

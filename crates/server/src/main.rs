@@ -34,10 +34,32 @@ async fn run() -> io::Result<()> {
         ..Config::default()
     };
     let mut instances = 1usize;
+    let mut bridge_dir = None;
+    let mut bridge_access = smolmc_bridge::Access::Observe;
     let mut world_profile = smolmc_sessions::WorldProfile::default();
     let mut args = std::env::args().skip(1);
     while let Some(arg) = args.next() {
         match arg.as_str() {
+            "--bridge-dir" => {
+                bridge_dir = Some(std::path::PathBuf::from(args.next().ok_or_else(|| {
+                    io::Error::new(
+                        io::ErrorKind::InvalidInput,
+                        "--bridge-dir needs a new private directory path",
+                    )
+                })?));
+            }
+            "--bridge-access" => {
+                bridge_access = match args.next().as_deref() {
+                    Some("observe") => smolmc_bridge::Access::Observe,
+                    Some("control") => smolmc_bridge::Access::Control,
+                    _ => {
+                        return Err(io::Error::new(
+                            io::ErrorKind::InvalidInput,
+                            "--bridge-access needs observe or control",
+                        ));
+                    }
+                };
+            }
             "--bind" => {
                 bind = args
                     .next()
@@ -106,7 +128,7 @@ async fn run() -> io::Result<()> {
             }
             "--help" | "-h" => {
                 println!(
-                    "smolmc [--bind IP:PORT] [--instances N] [--world-profile editable|read-only] [--trace-connections] [--max-connections N] [--connection-rate N] [--per-ip-rate N]\nM2B: Minecraft 26.3 protocol 777, online login, immutable stone, creative flight, player visibility and system chat.\nJoins route round-robin across N isolated arenas (default 1). No inventory or world simulation.\nDefaults: loopback 127.0.0.1:25565, 512 connections, 256 accepts/s, 32 accepts/IP/s. Ctrl-C or SIGTERM stops all connections."
+                    "smolmc [--bridge-dir NEW_PATH] [--bridge-access observe|control] [--bind IP:PORT] [--instances N] [--world-profile editable|read-only] [--trace-connections] [--max-connections N] [--connection-rate N] [--per-ip-rate N]\nM2C: optional Java control bridge; Minecraft 26.3 protocol 777, online login, immutable stone, creative flight, player visibility and system chat.\nJoins route round-robin across N isolated arenas (default 1). No inventory or world simulation.\nDefaults: loopback 127.0.0.1:25565, 512 connections, 256 accepts/s, 32 accepts/IP/s. Ctrl-C or SIGTERM stops all connections."
                 );
                 return Ok(());
             }
@@ -122,10 +144,22 @@ async fn run() -> io::Result<()> {
         instances,
         world_profile,
     )?);
+    if bridge_dir.is_none() && bridge_access == smolmc_bridge::Access::Control {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidInput,
+            "--bridge-access requires --bridge-dir",
+        ));
+    }
     let listener = TcpListener::bind(bind).await?;
+    let bridge = bridge_dir
+        .as_ref()
+        .map(|directory| {
+            smolmc_bridge::Bridge::start(Arc::clone(&service), directory, bridge_access)
+        })
+        .transpose()?;
     let metrics = Arc::new(Metrics::default());
     eprintln!(
-        "ready address={} minecraft=26.3 protocol=777 stage=M2B online=true max_connections={} registry_bytes={} chunk_template_bytes={}",
+        "ready address={} minecraft=26.3 protocol=777 stage=M2C online=true max_connections={} registry_bytes={} chunk_template_bytes={}",
         listener.local_addr()?,
         config.max_connections,
         service.registry_bytes(),
@@ -143,8 +177,12 @@ async fn run() -> io::Result<()> {
         },
     )
     .await;
+    let bridge_cleanup = match bridge {
+        Some(bridge) => bridge.shutdown().await,
+        None => Ok(()),
+    };
     let cleanup = service.shutdown().await;
     eprintln!("stopped metrics={:?}", metrics.snapshot());
     eprintln!("stopped sessions={:?}", service.metrics.snapshot());
-    result.and(cleanup)
+    result.and(bridge_cleanup).and(cleanup)
 }

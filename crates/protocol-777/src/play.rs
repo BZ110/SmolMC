@@ -31,6 +31,7 @@ pub enum Event {
     },
     Input(u8),
     Chat(String),
+    Command(String),
     Ignored,
 }
 fn double(r: &mut Reader<'_>) -> Result<f64, ProtocolError> {
@@ -75,6 +76,7 @@ pub fn decode(bytes: &[u8]) -> Result<Event, ProtocolError> {
             }
             Event::Ignored // attack has no effect in the M1D read-only profile
         }
+        0x07 => Event::Command(r.string(256)?.to_owned()),
         0x09 => return crate::presence::chat(bytes).map(Event::Chat),
         0x06 => {
             if r.varint()? != 0 {
@@ -278,9 +280,57 @@ pub fn block_ack(sequence: i32) -> Vec<u8> {
     out.finish()
 }
 
+/// Bounded literal commands with optional greedy plain-text arguments. No signed
+/// argument, suggestion provider, permissions framework or vanilla command API.
+/// Provenance: docs/M2C_BRIDGE_CONTRACT.md.
+pub fn commands(names: &[String]) -> Vec<u8> {
+    let mut out = Encoder::new(0x0f);
+    out.varint((1 + names.len() * 2) as i32);
+    out.byte(0);
+    out.varint(names.len() as i32);
+    for i in 0..names.len() {
+        out.varint((1 + i * 2) as i32);
+    }
+    for (i, name) in names.iter().enumerate() {
+        out.byte(5);
+        out.varint(1);
+        out.varint((2 + i * 2) as i32);
+        out.string(name);
+        out.byte(6);
+        out.varint(0);
+        out.string("args");
+        out.varint(5);
+        out.varint(2);
+    }
+    out.varint(0);
+    out.finish()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn unsigned_command_is_bounded_exact_and_signed_is_unsupported() {
+        let mut p = Encoder::new(7);
+        p.string("arena b");
+        assert_eq!(
+            decode(&p.finish()).unwrap(),
+            Event::Command("arena b".into())
+        );
+        let mut p = Encoder::new(7);
+        p.string(&"a".repeat(257));
+        assert!(decode(&p.finish()).is_err());
+        assert!(decode(&[7, 1, b'a', 0]).is_err());
+        assert!(decode(&[8, 0]).is_err());
+        assert_eq!(commands(&[]), [15, 1, 0, 0, 0]);
+        assert_eq!(
+            commands(&["arena".into()]),
+            [
+                15, 3, 0, 1, 1, 5, 1, 2, 5, b'a', b'r', b'e', b'n', b'a', 6, 0, 4, b'a', b'r',
+                b'g', b's', 5, 2, 0
+            ]
+        );
+    }
     #[test]
     fn movement_fields_and_invalid_floats() {
         let mut b = vec![0x1f];
