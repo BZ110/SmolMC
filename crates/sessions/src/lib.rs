@@ -12,6 +12,8 @@ use smolmc_world::{
 };
 #[cfg(all(test, unix))]
 mod m1d_probe;
+#[cfg(test)]
+mod perf;
 mod player;
 mod replication;
 mod worlds;
@@ -905,7 +907,7 @@ impl Service {
                 _=tokio::time::sleep_until(due)=>continue,
                 changed=membership.target.changed()=>{changed.map_err(|_| invalid("world control closed"))?;continue;},
                 changed=membership.terrain.changed()=>{changed.map_err(|_| invalid("world terrain closed"))?;continue;},
-                _=wake.notified()=>{viewer_dirty=true;continue;},
+                _=wake.notified(),if !viewer_dirty=>{viewer_dirty=true;continue;},
                 message=inbox.chat.recv()=>{
                     let packet=message.ok_or_else(||io::Error::other("replication directory closed"))?;
                     deadline(5,connection.outbound.send(&packet)).await?;continue;

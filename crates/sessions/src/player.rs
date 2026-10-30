@@ -218,6 +218,8 @@ impl Player {
             view: self.view,
             ready: self.pending_teleport.is_none(),
             version: 0,
+            #[cfg(test)]
+            at: Instant::now(),
         }
     }
 }

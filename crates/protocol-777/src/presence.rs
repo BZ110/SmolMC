@@ -88,7 +88,7 @@ pub fn spawn(id: i32, uuid: &[u8; 16], state: EntitySnapshot) -> Vec<u8> {
     e.finish()
 }
 pub fn position(id: i32, state: EntitySnapshot) -> Vec<u8> {
-    let mut e = Encoder::new(0x23);
+    let mut e = Encoder::with_capacity(0x23, 40);
     e.varint(id);
     e.varint(0); // PositionPath.LINEAR
     for v in state.position {
@@ -101,13 +101,13 @@ pub fn position(id: i32, state: EntitySnapshot) -> Vec<u8> {
     e.finish()
 }
 pub fn head(id: i32, yaw: f32) -> Vec<u8> {
-    let mut e = Encoder::new(0x55);
+    let mut e = Encoder::with_capacity(0x55, 7);
     e.varint(id);
     e.byte(angle(yaw));
     e.finish()
 }
 pub fn pose(id: i32, state: EntitySnapshot) -> Vec<u8> {
-    let mut e = Encoder::new(0x65);
+    let mut e = Encoder::with_capacity(0x65, 16);
     e.varint(id);
     e.byte(0);
     e.varint(0);

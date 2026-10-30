@@ -109,6 +109,16 @@ impl ChunkView {
         }
     }
     pub fn next_missing(&self) -> Option<ChunkPos> {
+        // A full, valid view covers all 25 distinct positions. Avoid the ring's
+        // repeated contains scans on every ordinary Play wake; retain correct
+        // behavior after a center change, before departures are removed.
+        if self
+            .sent
+            .iter()
+            .all(|slot| slot.is_some_and(|pos| self.center.contains(pos)))
+        {
+            return None;
+        }
         // Near-first Chebyshev rings; at most 25 comparisons against 25 slots.
         for radius in 0i32..=VIEW_RADIUS {
             for z in -radius..=radius {

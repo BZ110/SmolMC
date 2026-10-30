@@ -22,6 +22,8 @@ pub const CONTROL_LIMIT: usize = 64 * 1024;
 pub const OUTPUT_LIMIT: usize = 256 * 1024;
 const READ_AHEAD: usize = 4096;
 const MAX_RATIO: usize = 128;
+pub const BATCH_PACKETS: usize = 64;
+pub const BATCH_BYTES: usize = 16 * 1024;
 
 fn invalid(message: &'static str) -> io::Error {
     io::Error::new(io::ErrorKind::InvalidData, message)
@@ -407,6 +409,68 @@ impl<W: AsyncWrite + Unpin> Outbound<W> {
         self.cursor = 0;
         Ok(())
     }
+    /// Independent Minecraft frames in one bounded pending write. Compression is
+    /// still per packet; the connection's cipher advances once over the same byte
+    /// stream. A cancelled flush resumes its cursor without framing/encrypting twice.
+    pub fn queue_batch(&mut self, packets: &[Vec<u8>]) -> io::Result<()> {
+        use std::io::Write;
+        if self.pending.is_some() {
+            return Err(invalid("write already pending"));
+        }
+        if packets.is_empty() || packets.len() > BATCH_PACKETS {
+            return Err(invalid("invalid packet batch count"));
+        }
+        let mut total = 0usize;
+        for packet in packets {
+            if packet.is_empty() || packet.len() > BATCH_BYTES {
+                return Err(invalid("invalid batched packet size"));
+            }
+            total = total
+                .checked_add(packet.len())
+                .ok_or_else(|| invalid("batch size overflow"))?;
+        }
+        if total > BATCH_BYTES {
+            return Err(invalid("packet batch exceeds byte bound"));
+        }
+        let lease = self.budget.claim(total * 3 + packets.len() * 256)?;
+        let mut framed = Vec::with_capacity(total + packets.len() * 6);
+        for packet in packets {
+            if let Some(threshold) = self.compression {
+                if packet.len() >= threshold {
+                    let mut encoder = ZlibEncoder::new(Vec::new(), Compression::fast());
+                    encoder.write_all(packet)?;
+                    let compressed = encoder.finish()?;
+                    let header = (32 - (packet.len() as u32).leading_zeros()).div_ceil(7) as usize;
+                    encode_varint((header + compressed.len()) as i32, &mut framed);
+                    encode_varint(packet.len() as i32, &mut framed);
+                    framed.extend_from_slice(&compressed);
+                } else {
+                    encode_varint((packet.len() + 1) as i32, &mut framed);
+                    framed.push(0);
+                    framed.extend_from_slice(packet);
+                }
+            } else {
+                encode_varint(packet.len() as i32, &mut framed);
+                framed.extend_from_slice(packet);
+            }
+        }
+        if let Some(cipher) = &mut self.cipher {
+            let mut encrypted = vec![0; framed.len() + 16];
+            let used = cipher.apply(&framed, &mut encrypted)?;
+            encrypted.truncate(used);
+            framed = encrypted;
+        }
+        self.pending = Some(Packet {
+            bytes: framed,
+            _lease: lease,
+        });
+        self.cursor = 0;
+        Ok(())
+    }
+    pub async fn send_batch(&mut self, packets: &[Vec<u8>]) -> io::Result<()> {
+        self.queue_batch(packets)?;
+        self.flush().await
+    }
     pub async fn flush(&mut self) -> io::Result<()> {
         if let Some(packet) = &self.pending {
             while self.cursor < packet.len() {
@@ -580,6 +644,78 @@ mod tests {
         assert_eq!(budget.available(), 1024 * 1024);
     }
 
+    #[tokio::test]
+    async fn batched_ciphertext_matches_individual_framing_and_cipher_continuation() {
+        for compression in [None, Some(256)] {
+            let budget = ByteBudget::new(1024 * 1024);
+            let mut single = Outbound::new(tokio::io::sink(), budget.clone());
+            let mut batch = Outbound::new(tokio::io::sink(), budget.clone());
+            for out in [&mut single, &mut batch] {
+                out.enable_encryption(&[23; 16]).unwrap();
+                if let Some(threshold) = compression {
+                    out.enable_compression(threshold).unwrap();
+                }
+            }
+            let packets: Vec<Vec<u8>> = [1, 5, 255, 256, 1000]
+                .into_iter()
+                .map(|n| (0..n).map(|i| (i % 251) as u8).collect())
+                .collect();
+            let mut expected = Vec::new();
+            for packet in &packets {
+                single.queue(packet).unwrap();
+                expected.extend_from_slice(&single.pending.as_ref().unwrap().bytes);
+                single.flush().await.unwrap();
+            }
+            batch.queue_batch(&packets).unwrap();
+            assert_eq!(batch.pending.as_ref().unwrap().bytes, expected);
+            batch.flush().await.unwrap();
+            single.queue(&[1, 2, 3]).unwrap();
+            batch.queue(&[1, 2, 3]).unwrap();
+            assert_eq!(
+                single.pending.as_ref().unwrap().bytes,
+                batch.pending.as_ref().unwrap().bytes
+            );
+            single.flush().await.unwrap();
+            batch.flush().await.unwrap();
+            assert_eq!(budget.available(), 1024 * 1024);
+        }
+    }
+    #[tokio::test]
+    async fn cancelled_batch_resumes_cursor_and_rejects_invalid_or_overlapping_work() {
+        let budget = ByteBudget::new(1024 * 1024);
+        let (sender, receiver) = duplex(11);
+        let mut out = Outbound::new(sender, budget.clone());
+        let mut input = Inbound::new(receiver, budget.clone());
+        out.enable_encryption(&[17; 16]).unwrap();
+        input.enable_encryption(&[17; 16]).unwrap();
+        out.enable_compression(256).unwrap();
+        input.enable_compression(256).unwrap();
+        for packets in [
+            vec![],
+            vec![vec![]],
+            vec![vec![1]; BATCH_PACKETS + 1],
+            vec![vec![1; BATCH_BYTES + 1]],
+            vec![vec![1; BATCH_BYTES], vec![2]],
+        ] {
+            assert!(out.queue_batch(&packets).is_err());
+            assert_eq!(budget.available(), 1024 * 1024);
+        }
+        let packets: Vec<_> = (0..64u8).map(|n| vec![0x10, n]).collect();
+        out.queue_batch(&packets).unwrap();
+        assert!(out.queue_batch(&packets).is_err());
+        assert!(
+            tokio::time::timeout(std::time::Duration::from_millis(5), out.flush())
+                .await
+                .is_err()
+        );
+        let (written, ()) = tokio::join!(out.flush(), async {
+            for packet in &packets {
+                assert_eq!(&*input.read_packet().await.unwrap(), packet.as_slice());
+            }
+        });
+        written.unwrap();
+        assert_eq!(budget.available(), 1024 * 1024);
+    }
     #[tokio::test]
     async fn oversized_frame_rejected_before_body_allocation() {
         let budget = ByteBudget::new(100);

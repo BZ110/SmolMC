@@ -22,6 +22,11 @@ impl Encoder {
         out.varint(id);
         out
     }
+    pub fn with_capacity(id: i32, capacity: usize) -> Self {
+        let mut out = Self(Vec::with_capacity(capacity));
+        out.varint(id);
+        out
+    }
     pub fn varint(&mut self, value: i32) {
         encode_varint(value, &mut self.0);
     }

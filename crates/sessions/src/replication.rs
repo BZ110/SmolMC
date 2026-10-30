@@ -49,6 +49,8 @@ pub struct Replica {
     pub view: ChunkView,
     pub ready: bool,
     pub version: u64,
+    #[cfg(test)]
+    pub at: Instant,
 }
 pub struct Peer {
     pub entity: i32,
@@ -438,6 +440,8 @@ impl InstanceDir {
         }
     }
     fn update(&mut self, id: i32, token: u64) {
+        #[cfg(test)]
+        let _timer = crate::perf::Timer::new(&crate::perf::DIRECTORY);
         let Some(member) = self.members.get(&id) else {
             return;
         };
@@ -704,31 +708,87 @@ struct Sent {
 pub struct View {
     sent: HashMap<i32, Sent>,
     removals: Vec<i32>,
+    last_roster: Option<Arc<Vec<Arc<Peer>>>>,
+    packets: Vec<Vec<u8>>,
+    packet_bytes: usize,
+    #[cfg(test)]
+    ages: Vec<Instant>,
+    #[cfg(test)]
+    sampled: usize,
 }
 impl View {
+    async fn flush_packets(
+        &mut self,
+        output: &mut smolmc_network::transport::TcpOutbound,
+    ) -> io::Result<()> {
+        if !self.packets.is_empty() {
+            output.send_batch(&self.packets).await?;
+            self.packets.clear();
+            self.packet_bytes = 0;
+        }
+        #[cfg(test)]
+        for at in self.ages.drain(..) {
+            crate::perf::AGE.record(at.elapsed().as_micros() as u64);
+        }
+        Ok(())
+    }
+    async fn packet(
+        &mut self,
+        output: &mut smolmc_network::transport::TcpOutbound,
+        packet: Vec<u8>,
+    ) -> io::Result<()> {
+        use smolmc_network::transport::{BATCH_BYTES, BATCH_PACKETS};
+        if self.packets.len() == BATCH_PACKETS || self.packet_bytes + packet.len() > BATCH_BYTES {
+            self.flush_packets(output).await?;
+        }
+        if packet.len() > BATCH_BYTES {
+            return output.send(&packet).await;
+        }
+        self.packet_bytes += packet.len();
+        self.packets.push(packet);
+        Ok(())
+    }
+
     pub async fn clear(
         &mut self,
         output: &mut smolmc_network::transport::TcpOutbound,
     ) -> io::Result<()> {
+        self.flush_packets(output).await?;
+        self.last_roster = None;
         for (id, old) in self.sent.drain() {
             output.send(&presence::entity_remove(id)).await?;
             output.send(&presence::player_remove(&old.uuid)).await?;
         }
         Ok(())
     }
+    /// Successful return means all staged frames were written. The session owner
+    /// closes on error/cancellation, as with its existing five-second write deadline.
     pub async fn flush(
         &mut self,
         output: &mut smolmc_network::transport::TcpOutbound,
         inbox: &Inbox,
     ) -> io::Result<()> {
+        #[cfg(test)]
+        let _timer = crate::perf::Timer::new(&crate::perf::FLUSH);
+        #[cfg(test)]
+        let mut fanout = 0;
+        #[cfg(test)]
+        let mut positions = 0;
         let roster = Arc::clone(&inbox.roster.borrow());
         self.removals.clear();
-        self.removals.extend(
-            self.sent
-                .keys()
-                .filter(|&&id| roster.binary_search_by_key(&id, |p| p.entity).is_err())
-                .copied(),
-        );
+        if self
+            .last_roster
+            .as_ref()
+            .is_none_or(|old| !Arc::ptr_eq(old, &roster))
+        {
+            self.removals.extend(
+                self.sent
+                    .keys()
+                    .filter(|&&id| roster.binary_search_by_key(&id, |p| p.entity).is_err())
+                    .copied(),
+            );
+            self.last_roster = Some(Arc::clone(&roster));
+        }
         for id in self.removals.drain(..) {
             let old = self.sent.remove(&id).unwrap();
             output.send(&presence::entity_remove(id)).await?;
@@ -737,29 +797,41 @@ impl View {
         for (index, peer) in roster.iter().enumerate() {
             let r = *peer.state.borrow();
             let id = peer.entity;
-            if let Some(sent) = self.sent.get_mut(&id) {
+            if let Some(sent) = self.sent.get(&id) {
                 if sent.version == r.version {
                     continue;
                 }
-                if sent.state.position != r.state.position
-                    || sent.state.rotation != r.state.rotation
-                    || sent.state.on_ground != r.state.on_ground
+                let old = sent.state;
+                if old.position != r.state.position
+                    || old.rotation != r.state.rotation
+                    || old.on_ground != r.state.on_ground
                 {
-                    output.send(&presence::position(id, r.state)).await?;
+                    self.packet(output, presence::position(id, r.state)).await?;
+                    #[cfg(test)]
+                    {
+                        positions += 1;
+                    }
                 }
-                if sent.state.rotation[0] != r.state.rotation[0] {
-                    output
-                        .send(&presence::head(id, r.state.rotation[0]))
+                if old.rotation[0] != r.state.rotation[0] {
+                    self.packet(output, presence::head(id, r.state.rotation[0]))
                         .await?;
                 }
-                if sent.state.crouching != r.state.crouching
-                    || sent.state.sprinting != r.state.sprinting
-                {
-                    output.send(&presence::pose(id, r.state)).await?;
+                if old.crouching != r.state.crouching || old.sprinting != r.state.sprinting {
+                    self.packet(output, presence::pose(id, r.state)).await?;
                 }
+                #[cfg(test)]
+                {
+                    fanout += 1;
+                    self.sampled += 1;
+                    if self.sampled.is_multiple_of(64) {
+                        self.ages.push(r.at);
+                    }
+                }
+                let sent = self.sent.get_mut(&id).unwrap();
                 sent.state = r.state;
                 sent.version = r.version;
             } else {
+                self.flush_packets(output).await?;
                 output.send(&peer.info).await?;
                 output
                     .send(&presence::spawn(id, &peer.uuid, r.state))
@@ -777,6 +849,12 @@ impl View {
             if index % 8 == 7 {
                 tokio::task::yield_now().await;
             }
+        }
+        self.flush_packets(output).await?;
+        #[cfg(test)]
+        {
+            crate::perf::FANOUT.fetch_add(fanout, Relaxed);
+            crate::perf::POSITIONS.fetch_add(positions, Relaxed);
         }
         Ok(())
     }
@@ -809,6 +887,8 @@ mod tests {
             view,
             ready: true,
             version: 0,
+            #[cfg(test)]
+            at: Instant::now(),
         }
     }
     impl InstanceDir {

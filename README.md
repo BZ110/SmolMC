@@ -17,6 +17,12 @@ See [AGENTS.md](AGENTS.md), [the roadmap](docs/13_ROADMAP.md),
 [ADR-006](decisions/ADR-006-m2b-shared-cow-overlays-and-budgets.md) and the
 [accepted M2A checkpoint/report](docs/M2A_ENGINEERING_REPORT.md).
 
+A focused replication optimization followed M2B: bounded write batching and wake/
+allocation reductions lower CPU while preserving update rates and isolation.
+See [short before/after measurements and limits](docs/REPLICATION_CPU_REPORT.md)
+and [ADR-007](decisions/ADR-007-bounded-replication-write-batches.md). M2C remains
+unauthorized.
+
 ## Build and run
 
 Rust **1.99.1** is pinned. System OpenSSL development libraries are required
@@ -85,7 +91,7 @@ world, preserving the intact roof/heightmaps/lighting. Surface editing is unsupp
 | Connection admission | 256/s global, 32/s/IP, fixed one-second windows; at most 1024 tracked IPs/window |
 | Shared frame reservations | 16 MiB; leases follow packets/pending writes |
 | Inbound frames | 1 KiB before authentication; 64 KiB control phase |
-| Outbound packets | 256 KiB; one pending frame per writer |
+| Outbound packets | 256 KiB; one pending transformed write per writer; replication batches ≤64 packets / 16 KiB plaintext payload |
 | Inbound work | 128 KiB/s per connection before 8 MiB/s shared; wire bodies plus decoded output |
 | Compression | Threshold 256; decoded-size/ratio (128)/exact-stream-length checks |
 | Authentication | 8 concurrent challenges/verifications; 2 admitted RSA jobs |

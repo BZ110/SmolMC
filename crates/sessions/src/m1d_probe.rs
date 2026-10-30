@@ -366,7 +366,9 @@ async fn pump(
             0x63 | 0x41 | 0x73 | 0x60 | 0x27 | 0x0c => {}
             other => panic!("unexpected probe packet {other:x}"),
         }
-        observation.lock().unwrap().entities = entities.clone();
+        if matches!(id, 0x01 | 0x4e) {
+            observation.lock().unwrap().entities = entities.clone();
+        }
     }
 }
 
@@ -412,16 +414,31 @@ async fn active_play_resource_probe() {
     let ready = PathBuf::from(std::env::var("SMOLMC_PROBE_READY").unwrap());
     let report = PathBuf::from(std::env::var("SMOLMC_PROBE_REPORT").unwrap());
     if role == "server" {
-        let server = Server::start().await;
+        let worlds: usize = std::env::var("SMOLMC_PROBE_WORLDS")
+            .unwrap_or_else(|_| "1".into())
+            .parse()
+            .unwrap();
+        let server = Server::partitioned(worlds).await;
         std::fs::write(
-            ready,
+            &ready,
             serde_json::json!({"address":server.address.to_string(),"pid":std::process::id()})
                 .to_string(),
         )
         .unwrap();
         let mut stop =
             tokio::signal::unix::signal(tokio::signal::unix::SignalKind::terminate()).unwrap();
-        stop.recv().await;
+        let mut sample =
+            tokio::signal::unix::signal(tokio::signal::unix::SignalKind::user_defined1()).unwrap();
+        loop {
+            tokio::select! {
+                _=stop.recv()=>break,
+                _=sample.recv()=>{
+                    let value=serde_json::json!({"perf":crate::perf::snapshot(),"sessions":format!("{:?}",server.service.metrics.snapshot()),"network":format!("{:?}",server.network.snapshot())});
+                    let path=ready.with_extension("sample");let temporary=ready.with_extension("temporary");
+                    std::fs::write(&temporary,value.to_string()).unwrap();std::fs::rename(temporary,path).unwrap();
+                }
+            }
+        }
         let (s, n) = server.stop().await;
         std::fs::write(
             report,
