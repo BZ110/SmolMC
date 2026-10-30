@@ -1,6 +1,6 @@
 # SmolMC
 
-Rust Minecraft Java Edition **26.3 / protocol 777**, implemented through **M2C**:
+Rust Minecraft Java Edition **26.3 / protocol 777**, implemented through **revised M3 PvP Gameplay Foundation**:
 isolated worlds sharing immutable stone/registries, sparse COW snapshots, cheap
 clones/reset, profiles/budgets and event-driven idle lifecycle. See the
 [M2B engineering report](docs/M2B_ENGINEERING_REPORT.md) for acceptance and measurements.
@@ -9,11 +9,17 @@ M2A was accepted after user-reported real stock-client verification. M2B retains
 that protocol path and adds automated cloned-world isolation checks; no new stock
 rendering or real-account capacity claim. Player block interactions remain
 read-only; trusted Rust controls can edit buried Air/Stone blocks only.
-Inventory actions (including F/off-hand swap), signed commands and most gameplay
-are unsupported and may disconnect. The optional bridge supports bounded unsigned
+With `--pvp on`, the authoritative arena kit supports inventory/hotbar/F swaps,
+sword combat, health, death and respawn. Other survival actions and signed commands
+remain unsupported; see the M3 report for exact limits. The optional bridge supports bounded unsigned
 literal commands. No signed-player-chat verification is claimed.
 
-**M2C is implemented and validated; evidence is recorded in the [M2C report](docs/M2C_ENGINEERING_REPORT.md). Stop before M3.**
+**Revised M3 is implemented and user-verified with two stock 26.3 clients.**
+The accepted knockback profile follows 1.19.4-based behavior with the documented
+flat-arena contact policy; wire protocol remains 777.
+See the [M3 engineering report](docs/M3_ENGINEERING_REPORT.md),
+[protocol/gameplay evidence](docs/M3_PROTOCOL_EVIDENCE.md) and
+[security review](docs/M3_SECURITY_REVIEW.md). Stop after this revised milestone.
 See [AGENTS.md](AGENTS.md), [the roadmap](docs/13_ROADMAP.md),
 [ADR-006](decisions/ADR-006-m2b-shared-cow-overlays-and-budgets.md) and the
 [accepted M2A checkpoint/report](docs/M2A_ENGINEERING_REPORT.md).
@@ -52,6 +58,7 @@ credential/token input on the server command line.
 ```sh
 target/release/smolmc --bind 127.0.0.1:25565 --trace-connections
 target/release/smolmc --instances 2 --world-profile read-only --bind 127.0.0.1:25565
+target/release/smolmc --pvp on --arena-spawn 8,64,8 --bind 127.0.0.1:25566
 target/release/smolmc --help
 ```
 
@@ -61,9 +68,10 @@ and joins connection tasks, waits for bounded RSA work, checks resource leases,
 and prints counters. Opt-in connection tracing logs IDs and phase/packet metadata,
 never keys, tokens or payloads. Keep tracing off for ordinary load measurements.
 
-## Optional Java SDK (M2C)
+## Optional Java SDK
 
-Java **17+**, SDK **0.1.0**, Unix socket schema **1.0**. Bridge-off starts no JVM,
+Java **17+**, SDK **0.2.0**, Unix socket schema **1.1**; old 0.1.0/1.0 clients retain
+their operation/event subset. The extension adds read-only combat snapshots/events. Bridge-off starts no JVM,
 listener, event bus or per-player Java queue. Enabling the bridge adds no Rust
 thread or world tick. Java remains a separate process; its memory is reported
 separately (not hidden in Rust RSS). No Bukkit/Paper plugin compatibility or plugin
@@ -108,7 +116,8 @@ Trusted Rust Service controls create/clone/batch-edit/switch/park/reset/destroy 
 occupied reset/destroy are rejected. Reset reuses identity with a new generation.
 `--world-profile editable|read-only` defaults to editable, preserving M2A's trusted
 buried edits. Required protocol/presence/chat capabilities remain on; unavailable
-physics/mob/persistence/Java capabilities fail explicitly. Parked worlds own no
+general physics/mob/persistence capabilities fail explicitly. PvP is a separate
+startup opt-in; the optional local Java control bridge remains independent. Parked worlds own no
 terrain watch channel; terrain watches are created only while occupied. An authenticated local control listener and literal commands are available only
 with the explicitly enabled bridge.
 Edits are ephemeral Air/Stone overrides only at `-64 <= y < 63`, at most 65,536 per
@@ -147,10 +156,13 @@ Only the acknowledged **minecraft:core:26.3** known-pack path is supported.
 Declining it produces a readable Configuration rejection. The client supplies
 its own built-in registry data. The repository contains identifier inventories
 only: **32 registries, 432 entries, 773 named tags**. Tag memberships are explicitly
-empty for this bootstrap; vanilla mechanics/tag semantics are not implemented.
+empty for this bootstrap; the narrow PvP rules identify the two supported swords
+explicitly. General vanilla tag/survival semantics are not implemented.
 No Mojang registry/tag JSON/NBT assets or implementation bodies are bundled.
 
 ## Verification and reports
+
+- [Revised M3: authoritative arena combat, client acceptance, resources, limits and rollback](docs/M3_ENGINEERING_REPORT.md)
 
 - [M2B report: 84 tests on macOS/Linux, empty/modified/COW resource measurements, 34,000 lifecycle cycles, limits and Git rollback](docs/M2B_ENGINEERING_REPORT.md)
 - [M2B protocol evidence](docs/M2B_PROTOCOL_EVIDENCE.md) and [ADR-006](decisions/ADR-006-m2b-shared-cow-overlays-and-budgets.md)

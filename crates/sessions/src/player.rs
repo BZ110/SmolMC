@@ -14,6 +14,8 @@ fn invalid(message: &'static str) -> io::Error {
 
 pub struct Player {
     pub view: ChunkView,
+    pub dead: bool,
+    pub corpse_visible: bool,
     pub position: [f64; 3],
     pub rotation: [f32; 2],
     pub flying: bool,
@@ -36,6 +38,8 @@ impl Player {
     pub fn new(now: Instant) -> Self {
         Self {
             view: ChunkView::default(),
+            dead: false,
+            corpse_visible: false,
             position: SPAWN,
             rotation: [0.0; 2],
             flying: false,
@@ -56,6 +60,8 @@ impl Player {
         }
     }
     pub fn switch_world(&mut self, now: Instant, id: i32) {
+        self.dead = false;
+        self.corpse_visible = false;
         self.view = ChunkView::default();
         self.position = SPAWN;
         self.rotation = [0.; 2];
@@ -66,6 +72,12 @@ impl Player {
         self.travel_credit = 32.;
         self.last_move = now;
         // Keepalive and chat credit belong to the connection, not the world.
+    }
+    pub fn spawn_at(&mut self, position: [f64; 3]) {
+        self.position = position;
+        self.view.set_center(
+            ChunkPos::from_position(position[0], position[2]).expect("validated spawn"),
+        );
     }
     pub fn next_deadline(&self) -> Instant {
         let mut next = self.keepalive.map_or(self.next_keepalive, |(_, due)| due);
@@ -164,7 +176,7 @@ impl Player {
     /// Return true only when authoritative chunk interest changed. Client on-ground
     /// and input flags are never world authority. No collision/physics simulation.
     pub fn movement(&mut self, movement: Movement, now: Instant) -> io::Result<bool> {
-        if self.pending_teleport.is_some() {
+        if self.pending_teleport.is_some() || self.dead {
             return Ok(false);
         }
         self.on_ground = movement.flags & 1 != 0;
@@ -216,7 +228,7 @@ impl Player {
                 sprinting: self.sprinting,
             },
             view: self.view,
-            ready: self.pending_teleport.is_none(),
+            ready: self.pending_teleport.is_none() && (!self.dead || self.corpse_visible),
             version: 0,
             #[cfg(test)]
             at: Instant::now(),

@@ -11,6 +11,7 @@ pub const MAX_OUTBOUND_FRAME: usize = 4096;
 pub mod login;
 pub mod play;
 pub mod presence;
+pub mod pvp;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ProtocolError {

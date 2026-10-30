@@ -1,6 +1,6 @@
 # 13 — Practical roadmap: defer the ambitious parts
 
-**Authorization (2026-10-29): M1A–M2B and the focused replication optimization (`d881fe3`) are complete. The user explicitly authorizes M2C ONLY: optional Java SDK/bridge, real integration/failure tests, short measurements, full regression and feasible Linux validation, ADR/report/commit. Stop before M3.** Milestone gates are unchanged.
+**Revised authorization (2026-10-29): M1A–M2C and replication optimization are complete (`m2c-validated`, `08fef9a`). The user explicitly replaces the original M3 with M3 — PvP Gameplay Foundation. Checkpoint `m3-pvp-before` preserves M2C. Implement this one vertical slice and stop.**
 
 ## R0 — Research, architecture, constraints (current deliverable)
 Artifacts: source inventory, protocol guide, decisions, feature model, Java SDK contract, benchmarks, risk register. **Gate:** agree on what defines M1 connectivity and version target.
@@ -68,14 +68,50 @@ transactional edits, read-only events and bounded failure isolation. Rust-only,
 real Java, encrypted Play and Linux evidence are recorded in the report. No M3
 plugin loading/permissions framework or later gameplay capabilities. Stop here.
 
-## M3 — Polished plugin/dev ecosystem (future)
-Commands, permissions, Javadocs, plugin lifecycle, structured config, errors, scheduling, debugger/telemetry, examples; compatibility matrix. **Gate:** at least three independently written small plugins (chat/staff, arena manager, creative block editor) work without touching core.
+## M3 — PvP Gameplay Foundation (implemented and user-accepted)
 
-## M4 — Optional heavy subsystems (future)
-Inventory, actual block interactions, entity physics, redstone, fluid/block ticks, weather, persistence, import/export, survival; each independently budgeted and feature-gated, with correctness regressions checked.
+Server-authoritative player combat for two authenticated unmodified 26.3 clients:
+swings, supported inventory/hotbar/main/off-hand/equipment, swords, validated reach,
+cooldowns, health/damage/hurt/knockback, invulnerability, death interface and respawn.
+Configurable PvP/spawn and deterministic kit. Minimal nonblocking optional Java
+snapshots/events/control extension. No extra 50ms combat buffering; no idle-world
+simulation or per-player/world worker. Preserve all M1A–M2C guarantees.
 
-## M5 — Scaling and compatibility (future)
-Regionization/parallel heavy world logic based on profiles; additional client versions and possible Bukkit wrappers only when real adoption requires them. Optimize based on measured bottlenecks.
+**Gate:** two real vanilla clients equip, swing, fight, take damage/knockback, die,
+respawn, continue, remain isolated across worlds and reconnect cleanly. Automated
+unit/encrypted Play/failure/bridge regressions and short comparable movement/combat
+resource/latency measurements supplement, not replace, that required real-client
+acceptance. Document deliberate unsupported vanilla mechanics honestly.
+
+**Evidence (2026-10-30):** [M3 engineering report](M3_ENGINEERING_REPORT.md),
+[protocol/gameplay ledger](M3_PROTOCOL_EVIDENCE.md), [security review](M3_SECURITY_REVIEW.md)
+and [ADR-009](../decisions/ADR-009-m3-authoritative-arena-pvp.md). The user verified
+both stock 26.3 clients and accepted the final 1.19.4-based knockback profile,
+including timed consecutive hits. Its deliberate flat-arena contact policy is
+recorded explicitly; no Purpur or Paper compatibility framework was introduced.
+Short matched movement/combat, full Rust/Java checks and Linux evidence accompany
+the final checkpoint `m3-pvp-validated`. Stop here; later milestones remain deferred.
+
+## Deferred original M3 — plugin/dev ecosystem
+
+The old M3 (polished commands/permissions, plugin JAR lifecycle, config/scheduling,
+debugger/telemetry and three independently written plugins) is deferred by explicit
+user instruction until basic gameplay works. M2C literal commands/SDK remain.
+
+## Deferred M4 — optional heavy subsystems
+
+Only the narrow inventory/player-combat/death dependencies above move into revised
+M3. Full survival inventory/crafting/containers/enchanting, block interactions,
+entities/mobs, general physics, redstone/fluid/random ticks, weather, persistence
+and arbitrary import/export remain unauthorized future work.
+
+## Deferred M5 — scaling and compatibility
+
+Regionization/parallel heavy simulation, additional client versions and Bukkit/
+Paper wrappers remain future scope. No next milestone is authorized.
 
 ## Why stage order matters
-A flawless COW arena system is worthless if 26.3 client registry negotiation fails. A rich Java API with wrong threading guarantees locks in painful incompatibilities. First prove the vertical slice; then optimize and expose stable contracts.
+
+The revised order proves playable PvP before expanding the plugin ecosystem.
+Protocol correctness, authoritative ownership and measured resource bounds remain
+prerequisites; illustrative API sketches are not extra scope.

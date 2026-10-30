@@ -1,5 +1,13 @@
 # M2C engineering report — optional Java SDK and local bridge
 
+> Protocol erratum, 2026-10-30: real M3 client checks exposed a command-advertisement
+> packet ID defect in this checkpoint. Commands must use 0x10, not 0x0f. The M2C
+> headless fixture mirrored the incorrect ID; its pass did not establish vanilla
+> GUI command rendering. Revised M3 corrects it and adds an independent official
+> client codec check. Historical results below remain historical; see
+> [M3 protocol evidence](M3_PROTOCOL_EVIDENCE.md).
+
+
 Date: **2026-10-29 America/Toronto** (evidence timestamps extend into October 30
 UTC). Authority: explicit user M2C-only authorization after optimized commit
 `d881fe3`. Pre-implementation checkpoint **`m2c-before` → `5d6f8d2`** updates

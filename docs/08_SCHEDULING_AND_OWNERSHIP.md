@@ -38,3 +38,19 @@ Deterministic virtual-time tests; 1000 idle instances do not create 1000 periodi
 - https://docs.papermc.io/folia/reference/overview/
 - https://docs.papermc.io/folia/reference/region-logic/
 - https://docs.papermc.io/paper/dev/folia-support/
+
+## Revised M3 implemented subset
+
+One existing directory serializes combat and inventory; accepted poses remain
+session-owned and are captured with generation-checked actions. No Java callback,
+network write or await occurs under player mutation locks. Critical delivery uses
+a bounded 32-message queue per enabled session and existing connection write
+batching/deadlines. Important state is delivered or the slow connection is closed.
+
+A common monotonic epoch supplies lazy 50ms tick indices. Cooldown/iframes do not
+require decrement loops. Flat-stone motion is bounded scalar catch-up on existing
+movement/combat events; the vanilla listener's post-player-tick position restoration
+is part of that subset. Corpse visibility adds a one-second deadline to the existing
+session select, with no new task. Empty/parked worlds still own no simulation work.
+Optional control-event sequencing uses its own short publication mutex; movement
+and bridge-off combat do not touch it. See ADR-009 for scope and trade-offs.

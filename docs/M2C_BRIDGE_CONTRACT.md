@@ -1,7 +1,8 @@
-# M2C bridge contract and Java SDK 0.1.0
+# M2C bridge contract with revised M3 extension
 
-Design decision, implemented scope: optional local Unix IPC, schema **1.0**,
-SDK semantic version **0.1.0**, Java **17+** source/bytecode. macOS and Linux.
+Design decision, implemented scope: optional local Unix IPC, schema **1.1**,
+SDK semantic version **0.2.0**, Java **17+** source/bytecode. Schema 1.0 / SDK
+0.1.0 peers remain supported on their original operation/event subset. macOS and Linux.
 No JNI, raw pointers, remote control endpoint, plugin loader or Bukkit/Paper ABI.
 Rust owns gameplay, identities, worlds, packet ordering and resource limits.
 
@@ -45,7 +46,7 @@ message queue or JVM; existing session/world controls remain event-driven.
 
 The standalone SDK has no third-party Java dependency. All control operations
 return `CompletableFuture`; only attach/launch/close manage blocking process/I/O
-lifecycle. The SDK JAR is `target/java/smolmc-sdk-0.1.0.jar` after the check script.
+lifecycle. The SDK JAR is `target/java/smolmc-sdk-0.2.0.jar` after the check script.
 
 - `templates().load("stone_flat")`: bind the single built-in immutable template.
   Other names/file imports fail explicitly; no arbitrary template parser.
@@ -99,8 +100,10 @@ Request: `u8=1, u64 correlation, u8 opcode, body`. First request is opcode 0:
 `u16 major=1, u16 minor=0, credential32`. No incarnation prefix for handshake.
 All later request bodies start with server-incarnation UUID16. Correlations are
 positive, strictly increasing per connection; duplicates/out-of-order close the
-peer. Current SDK version requires an exact 1.0 / 0.1.0 match; breaking changes
-require major negotiation before operations, additive evolution is not assumed.
+peer. Negotiation accepts minor 0 or 1 and echoes it with API 0.1.0 or 0.2.0
+respectively. The new SDK requires 1.1 / 0.2.0; old peers retain 1.0 / 0.1.0.
+Minor-0 peers cannot call new operations or subscribe to new events. Breaking
+changes still require major negotiation.
 
 Response: `u8=2, u64 correlation, u8 opcode, u16 status, payload`.
 Handshake success payload: `UUID16 incarnation, u16 major, u16 minor,
@@ -119,11 +122,12 @@ Errors describe accepted control outcomes, never include secrets or raw requests
 | 10 list players | empty | u16 count≤512, repeated player snapshot |
 | 11 transfer to spawn | i32 entity, UUID16 player, world | empty (accepted) |
 | 12 system message | i32 entity, UUID16 player, string≤1024 bytes, no controls | empty (accepted) |
-| 13 subscribe | u32 mask: bit k for event k, allowed 0x7fe | empty; replaces that peer's ring cursor |
+| 13 subscribe | u32 mask: bit k for event k; minor 0: 0x7fe, minor 1: 0x3ffe | empty; replaces that peer's ring cursor |
 | 14 unsubscribe | empty | empty |
 | 15 register / 16 unregister | string name≤32 bytes | empty |
 | 17 operator invocation | string command≤256 bytes, no control chars | empty (event emitted) |
 | 18 list worlds | empty | u16 count≤4096, repeated world |
+| 19 combat snapshot (minor 1) | i32 entity, UUID16 player | f32 health, u8 dead, u8 selected hotbar, i32 main item, i32 offhand item |
 
 Event: `u8=3, u64 sequence, u8 kind, world (0/0 for operator command),
 u8 playerPresent, [player snapshot], string text≤256 bytes`. Kinds:
@@ -133,8 +137,10 @@ command string. Events are read-only/noncancellable snapshots. No per-move/chat/
 chunk/packet event serialization. Join is membership admission, not fully loaded
 client; leave is RAII membership release, including cancellation. A cloned event
 describes the new world; reset describes its fresh generation; destroy its retired
-handle. Mutation and sequence assignment occur under the existing cold catalog
-lock. Server order is preserved per peer's event stream; futures may complete on
+handle. Lifecycle mutation retains the cold catalog lock. Sequence assignment and
+bounded broadcast publication share a short optional event mutex (no IO, Java,
+await or world mutation), preserving order even for concurrent trusted Rust callers
+without taking the catalog lock for combat notices. Server order is preserved per peer's event stream; futures may complete on
 different Java workers, so callback and future completion order can differ.
 
 Sequence is global and may skip masked events or commands owned by other peers;
@@ -199,3 +205,23 @@ Primary platform references: [JDK SocketChannel](https://docs.oracle.com/en/java
 (concurrent read/write Unix sockets) and [Tokio bounded broadcast](https://docs.rs/tokio/latest/tokio/sync/broadcast/index.html)
 (explicit lag detection). Implementation targets pinned Cargo.lock and Java 17
 APIs; platform references do not constitute minigame/protocol test evidence.
+
+## Revised M3 additive combat observations
+
+`players().combat(handle)` returns a cold authoritative `CombatState` snapshot;
+PvP-disabled sessions return UnsupportedFeature. UUID/incarnation checks remain.
+Minor-1 event kinds 11 PLAYER_DAMAGED, 12 PLAYER_DIED, 13 PLAYER_RESPAWNED append
+`CombatState` fields followed by `i32 sourceEntityId, f32 actualHealthLoss` to the
+common event envelope. Respawn source/damage are zero. Actual health loss is capped
+at remaining health, not raw overkill. Damage then death are emitted in that order;
+respawn announces reset state before subsequent terrain/teleport ACKs. These are
+not client rendering barriers, veto callbacks or mutation APIs. Typed Java Event
+has nullable `CombatChange`; its former five-argument constructor remains available.
+Observe grant permits these snapshots/events; no new control grant or Java combat
+dependency. No per-movement event was added. Bridge-off constructs no event bus.
+
+Protocol erratum (2026-10-30): the M2C command advertisement encoder used Play ID
+0x0f. Actual 26.3 Commands is **0x10** (bundle delimiter occupies ID 0). Revised M3
+corrects it and checks real vanilla codec decode/re-encode independently. Earlier
+self-contained encrypted tests mirrored the wrong ID and did not establish stock
+GUI command rendering. See [M3 protocol evidence](M3_PROTOCOL_EVIDENCE.md).

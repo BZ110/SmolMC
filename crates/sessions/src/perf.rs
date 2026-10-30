@@ -18,6 +18,8 @@ impl Histogram {
         self.0.iter().map(|v| v.load(Relaxed)).collect()
     }
 }
+pub static ACTION_PROCESS: Histogram = Histogram::new();
+pub static CRITICAL_WRITE: Histogram = Histogram::new();
 pub static DIRECTORY: Histogram = Histogram::new();
 pub static FLUSH: Histogram = Histogram::new();
 pub static AGE: Histogram = Histogram::new();
@@ -35,5 +37,5 @@ impl Drop for Timer {
     }
 }
 pub fn snapshot() -> serde_json::Value {
-    serde_json::json!({"directory_us":DIRECTORY.values(),"flush_us":FLUSH.values(),"publish_to_write_us_sampled":AGE.values(),"fanout_versions":FANOUT.load(Relaxed),"positions":POSITIONS.load(Relaxed)})
+    serde_json::json!({"action_to_processing_us":ACTION_PROCESS.values(),"combat_event_to_write_us":CRITICAL_WRITE.values(),"directory_us":DIRECTORY.values(),"flush_us":FLUSH.values(),"publish_to_write_us_sampled":AGE.values(),"fanout_versions":FANOUT.load(Relaxed),"positions":POSITIONS.load(Relaxed)})
 }

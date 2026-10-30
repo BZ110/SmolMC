@@ -14,14 +14,14 @@ import java.util.concurrent.atomic.*;
 import java.util.function.*;
 
 /**
- * Optional local SmolMC SDK 0.1.0 (schema 1.0), Java 17+. Every operation is async. close()
+ * Optional local SmolMC SDK 0.2.0 (schema 1.1), Java 17+. Every operation is async. close()
  * disconnects this control peer; launched process ownership is separate. Dependent actions may run
  * on bounded completion workers or the attaching caller (standard CompletableFuture behavior).
  * Never block waiting for another SDK future inside such an action; compose with thenCompose
  * instead.
  */
 public final class MinecraftRustServer implements AutoCloseable {
-  public static final String API_VERSION = "0.1.0";
+  public static final String API_VERSION = "0.2.0";
   static final int MAX_FRAME = 131072, MAX_PENDING = 64;
 
   public enum Profile {
@@ -119,7 +119,10 @@ public final class MinecraftRustServer implements AutoCloseable {
     PLAYER_JOINED,
     PLAYER_LEFT,
     PLAYER_WORLD_CHANGED,
-    COMMAND
+    COMMAND,
+    PLAYER_DAMAGED,
+    PLAYER_DIED,
+    PLAYER_RESPAWNED
   }
 
   /**
@@ -127,7 +130,21 @@ public final class MinecraftRustServer implements AutoCloseable {
    * events.
    */
   public record Event(
-      long sequence, EventKind kind, WorldHandle world, Player player, String text) {}
+      long sequence,
+      EventKind kind,
+      WorldHandle world,
+      Player player,
+      String text,
+      CombatChange combat) {
+    public Event(long sequence, EventKind kind, WorldHandle world, Player player, String text) {
+      this(sequence, kind, world, player, text, null);
+    }
+  }
+
+  public record CombatState(
+      float health, boolean dead, int selectedSlot, int mainHandItemId, int offHandItemId) {}
+
+  public record CombatChange(CombatState state, int sourceEntityId, float damage) {}
 
   private record Pending(
       int operation,
@@ -227,7 +244,7 @@ public final class MinecraftRustServer implements AutoCloseable {
                 d.writeLong(1);
                 d.writeByte(0);
                 d.writeShort(1);
-                d.writeShort(0);
+                d.writeShort(1);
                 d.write(token);
               });
       try {
@@ -242,7 +259,7 @@ public final class MinecraftRustServer implements AutoCloseable {
       int status = r.u16();
       if (status != 0) throw error(status, r.string(1024));
       UUID id = r.uuid();
-      if (r.u16() != 1 || r.u16() != 0 || !r.string(32).equals(API_VERSION))
+      if (r.u16() != 1 || r.u16() != 1 || !r.string(32).equals(API_VERSION))
         throw new IOException("unsupported SDK/schema version");
       boolean control = r.u8() == 1;
       r.end();
@@ -477,6 +494,11 @@ public final class MinecraftRustServer implements AutoCloseable {
   }
 
   public final class Players {
+    /** Authoritative cold snapshot. PvP disabled, missing and stale sessions fail explicitly. */
+    public CompletableFuture<CombatState> combat(PlayerHandle player) {
+      return request(19, d -> putPlayer(d, player), MinecraftRustServer::combatState);
+    }
+
     public CompletableFuture<List<Player>> list() {
       return request(
           10,
@@ -701,10 +723,13 @@ public final class MinecraftRustServer implements AutoCloseable {
             throw e;
           }
         } else if (kind == 3) {
-          if (op < 1 || op > 10) throw new IOException("invalid event kind");
+          if (op < 1 || op > 13) throw new IOException("invalid event kind");
           WorldHandle w = optionalWorld(r);
           Player p = r.u8() != 0 ? player(r) : null;
-          Event event = new Event(id, EventKind.values()[op - 1], w, p, r.string(256));
+          String text = r.string(256);
+          CombatChange change =
+              op >= 11 ? new CombatChange(combatState(r), r.i32(), r.f32()) : null;
+          Event event = new Event(id, EventKind.values()[op - 1], w, p, text, change);
           r.end();
           Subscription sub = subscription.get();
           if (sub != null && sub.active.get() && sub.kinds.contains(event.kind()))
@@ -804,6 +829,15 @@ public final class MinecraftRustServer implements AutoCloseable {
     if (n > 4096) throw new IllegalArgumentException("batch exceeds 4096");
   }
 
+  private static CombatState combatState(Wire r) throws IOException {
+    float health = r.f32();
+    int dead = r.u8(), selected = r.u8();
+    int main = r.i32(), off = r.i32();
+    if (!Float.isFinite(health) || health < 0 || health > 20 || dead > 1 || selected > 8)
+      throw new IOException("invalid combat snapshot");
+    return new CombatState(health, dead != 0, selected, main, off);
+  }
+
   private WorldHandle world(Wire r) throws IOException {
     return new WorldHandle(serverId, r.i64(), r.i64());
   }
@@ -848,6 +882,10 @@ public final class MinecraftRustServer implements AutoCloseable {
 
     Wire(byte[] body) {
       data = new DataInputStream(new ByteArrayInputStream(body));
+    }
+
+    float f32() throws IOException {
+      return data.readFloat();
     }
 
     int u8() throws IOException {

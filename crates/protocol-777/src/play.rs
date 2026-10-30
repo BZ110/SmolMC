@@ -284,7 +284,7 @@ pub fn block_ack(sequence: i32) -> Vec<u8> {
 /// argument, suggestion provider, permissions framework or vanilla command API.
 /// Provenance: docs/M2C_BRIDGE_CONTRACT.md.
 pub fn commands(names: &[String]) -> Vec<u8> {
-    let mut out = Encoder::new(0x0f);
+    let mut out = Encoder::new(0x10);
     out.varint((1 + names.len() * 2) as i32);
     out.byte(0);
     out.varint(names.len() as i32);
@@ -322,11 +322,11 @@ mod tests {
         assert!(decode(&p.finish()).is_err());
         assert!(decode(&[7, 1, b'a', 0]).is_err());
         assert!(decode(&[8, 0]).is_err());
-        assert_eq!(commands(&[]), [15, 1, 0, 0, 0]);
+        assert_eq!(commands(&[]), [16, 1, 0, 0, 0]);
         assert_eq!(
             commands(&["arena".into()]),
             [
-                15, 3, 0, 1, 1, 5, 1, 2, 5, b'a', b'r', b'e', b'n', b'a', 6, 0, 4, b'a', b'r',
+                16, 3, 0, 1, 1, 5, 1, 2, 5, b'a', b'r', b'e', b'n', b'a', 6, 0, 4, b'a', b'r',
                 b'g', b's', 5, 2, 0
             ]
         );

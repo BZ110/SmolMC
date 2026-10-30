@@ -7,7 +7,11 @@ validated profiles/budgets and retained-memory metrics. See
 [the M2B report](M2B_ENGINEERING_REPORT.md). The diagram remains the long-term
 proposal: no simulation workers, persistence or survival. M2C adds an optional bounded local
 Java control bridge ([ADR-008](../decisions/ADR-008-m2c-optional-java-ipc.md)); no
-plugin host or M3 system. Current authority is in AGENTS.md.
+plugin host. Revised M3 adds opt-in authoritative arena combat on the existing
+instance directory, bounded per-session critical delivery, lazy scalar timing/motion
+and optional read-only Java combat observations. No player/world simulation worker
+or full survival engine. See [ADR-009](../decisions/ADR-009-m3-authoritative-arena-pvp.md)
+and [M3 evidence](M3_ENGINEERING_REPORT.md). Current authority is in AGENTS.md.
 
 ## High-level ownership tree
 

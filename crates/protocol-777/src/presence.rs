@@ -37,6 +37,9 @@ pub fn chat(bytes: &[u8]) -> Result<String, ProtocolError> {
 }
 
 pub fn player_info(profile: &Profile) -> Vec<u8> {
+    player_info_mode(profile, 1)
+}
+pub fn player_info_mode(profile: &Profile, mode: i32) -> Vec<u8> {
     let mut e = Encoder::new(0x47);
     e.byte(0x8f); // ADD, INITIALIZE_CHAT, GAME_MODE, LISTED, HAT; fixed 8-bit enum set
     e.varint(1);
@@ -52,7 +55,7 @@ pub fn player_info(profile: &Profile) -> Vec<u8> {
         }
     }
     e.boolean(false); // no remote signed-chat session/key
-    e.varint(1); // creative
+    e.varint(mode); // protocol GameType
     e.boolean(true); // listed
     e.boolean(true); // hat
     e.finish()

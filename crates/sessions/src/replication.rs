@@ -6,7 +6,8 @@
 //! coalesce state/rosters; only chat has a bounded message queue. No simulation/world
 //! worker. Keys never recycle while outstanding, and a disabled instance's indices are
 //! dropped wholesale rather than reused by another world.
-use crate::{MAX_PLAYERS, Metrics, invalid};
+use crate::{MAX_PLAYERS, Metrics, gameplay, invalid};
+use smolmc_protocol_777::pvp;
 use smolmc_protocol_777::{
     login::Profile,
     presence::{self, EntitySnapshot},
@@ -25,6 +26,8 @@ use tokio::{
     task::JoinHandle,
     time::Instant,
 };
+
+mod combat;
 
 const COMMAND_CAPACITY: usize = MAX_PLAYERS * 4;
 const CHAT_CAPACITY: usize = 32;
@@ -57,12 +60,19 @@ pub struct Peer {
     pub uuid: [u8; 16],
     pub info: Arc<[u8]>,
     pub state: watch::Receiver<Replica>,
+    game: Option<gameplay::Shared>,
 }
 pub struct Inbox {
     pub roster: watch::Receiver<Arc<Vec<Arc<Peer>>>>,
     pub chat: mpsc::Receiver<Arc<[u8]>>,
     pub wake: Arc<Notify>,
     pub closed: watch::Receiver<bool>,
+    pub critical: Option<mpsc::Receiver<gameplay::Delivery>>,
+}
+#[derive(Clone, Copy)]
+struct ActionSource {
+    state: EntitySnapshot,
+    ready: bool,
 }
 enum Command {
     Join {
@@ -72,6 +82,7 @@ enum Command {
         profile: Arc<Profile>,
         pending: Arc<SlotMutex<Pending>>,
         reply: oneshot::Sender<io::Result<Inbox>>,
+        game: Option<gameplay::Shared>,
     },
     Update {
         entity: i32,
@@ -83,6 +94,15 @@ enum Command {
         instance: WorldId,
         token: u64,
         text: String,
+    },
+    Action {
+        entity: i32,
+        instance: WorldId,
+        token: u64,
+        action: pvp::Action,
+        source: ActionSource,
+        damage_type: i32,
+        at: Instant,
     },
     Leave(WorldId, i32, u64),
     Stop,
@@ -108,6 +128,29 @@ impl Drop for Lease {
     }
 }
 impl Lease {
+    pub fn pose(&self, source: Replica) {
+        self.pending
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .latest = source;
+    }
+    pub fn action(&self, action: pvp::Action, source: Replica, damage_type: i32) -> io::Result<()> {
+        self.sender
+            .try_send(Command::Action {
+                entity: self.entity,
+                instance: self.instance,
+                token: self.token,
+                action,
+                source: ActionSource {
+                    state: source.state,
+                    ready: source.ready,
+                },
+                damage_type,
+                at: Instant::now(),
+            })
+            .map_err(|_| io::Error::new(io::ErrorKind::WouldBlock, "gameplay ingress full/closed"))
+    }
+
     pub fn update(&self, replica: Replica) -> io::Result<()> {
         let mut slot = self.pending.lock().unwrap_or_else(|e| e.into_inner());
         slot.latest = replica;
@@ -153,12 +196,24 @@ impl Hub {
             ))),
         }
     }
+    #[cfg(test)]
     pub async fn join(
         &self,
         entity: i32,
         instance: WorldId,
         profile: Arc<Profile>,
         replica: Replica,
+    ) -> io::Result<(Lease, Inbox)> {
+        self.join_game(entity, instance, profile, replica, None)
+            .await
+    }
+    pub async fn join_game(
+        &self,
+        entity: i32,
+        instance: WorldId,
+        profile: Arc<Profile>,
+        replica: Replica,
+        game: Option<gameplay::Shared>,
     ) -> io::Result<(Lease, Inbox)> {
         let leave = self
             .sender
@@ -187,6 +242,7 @@ impl Hub {
                 profile,
                 pending,
                 reply,
+                game,
             })
             .map_err(|_| io::Error::new(io::ErrorKind::WouldBlock, "replication ingress"))?;
         let inbox = answer
@@ -238,17 +294,22 @@ impl Directory {
     }
     async fn run(mut self, mut receiver: mpsc::Receiver<Command>) {
         'commands: while let Some(command) = receiver.recv().await {
+            let mut combat = matches!(&command, Command::Action { .. });
             if !self.command(command) {
                 break;
             }
             let start = Instant::now();
             for _ in 1..32 {
-                if start.elapsed() >= std::time::Duration::from_millis(1) {
+                // A sweep may produce reliable state for many recipients. Let
+                // their existing writers drain before the next gameplay action;
+                // retaining movement batching and the same bounded queue sizes.
+                if combat || start.elapsed() >= std::time::Duration::from_millis(1) {
                     break;
                 }
                 let Ok(command) = receiver.try_recv() else {
                     break;
                 };
+                combat = matches!(&command, Command::Action { .. });
                 if !self.command(command) {
                     break 'commands;
                 }
@@ -262,7 +323,8 @@ impl Directory {
         let touched = match &command {
             Command::Join { instance, .. }
             | Command::Update { instance, .. }
-            | Command::Chat { instance, .. } => Some(*instance),
+            | Command::Chat { instance, .. }
+            | Command::Action { instance, .. } => Some(*instance),
             Command::Leave(instance, ..) => Some(*instance),
             Command::Stop => None,
         };
@@ -274,6 +336,7 @@ impl Directory {
                 profile,
                 pending,
                 reply,
+                game,
             } => {
                 if self.metrics.active_replicas.load(Relaxed) >= MAX_PLAYERS {
                     let _ = reply.send(Err(invalid("global replica capacity")));
@@ -285,7 +348,7 @@ impl Directory {
                         v.insert(InstanceDir::new(Arc::clone(&self.metrics)))
                     }
                 };
-                let _ = reply.send(index.join_pending(entity, token, profile, pending));
+                let _ = reply.send(index.join_with_game(entity, token, profile, pending, game));
             }
             Command::Update {
                 entity,
@@ -314,6 +377,25 @@ impl Directory {
                         self.fanout_credit -= index.members.len() as f64;
                         index.chat(entity, text);
                     }
+                }
+            }
+            Command::Action {
+                entity,
+                instance,
+                token,
+                action,
+                source,
+                damage_type,
+                at,
+            } => {
+                #[cfg(test)]
+                crate::perf::ACTION_PROCESS.record(at.elapsed().as_micros() as u64);
+                #[cfg(not(test))]
+                let _ = at;
+                if let Some(index) = self.instances.get_mut(&instance)
+                    && index.members.get(&entity).is_some_and(|m| m.token == token)
+                {
+                    index.action(entity, action, source, damage_type);
                 }
             }
             Command::Leave(instance, entity, token) => {
@@ -353,6 +435,8 @@ struct Member {
     viewers: HashSet<i32>,
     chat_credit: f64,
     chat_at: Instant,
+    game: Option<gameplay::Shared>,
+    critical: Option<mpsc::Sender<gameplay::Delivery>>,
 }
 
 impl InstanceDir {
@@ -366,12 +450,23 @@ impl InstanceDir {
             metrics,
         }
     }
+    #[cfg(test)]
     fn join_pending(
         &mut self,
         entity: i32,
         token: u64,
         profile: Arc<Profile>,
         pending: Arc<SlotMutex<Pending>>,
+    ) -> io::Result<Inbox> {
+        self.join_with_game(entity, token, profile, pending, None)
+    }
+    fn join_with_game(
+        &mut self,
+        entity: i32,
+        token: u64,
+        profile: Arc<Profile>,
+        pending: Arc<SlotMutex<Pending>>,
+        game: Option<gameplay::Shared>,
     ) -> io::Result<Inbox> {
         if self.members.len() >= MAX_PLAYERS || self.members.contains_key(&entity) {
             return Err(invalid("duplicate/capacity replica"));
@@ -381,13 +476,20 @@ impl InstanceDir {
         let peer = Arc::new(Peer {
             entity,
             uuid: profile.uuid,
-            info: presence::player_info(&profile).into(),
+            info: presence::player_info_mode(&profile, if game.is_some() { 2 } else { 1 }).into(),
             state: state_rx,
+            game: game.clone(),
         });
         let (roster, roster_rx) = watch::channel(Arc::new(Vec::new()));
         let (chat, chat_rx) = mpsc::channel(CHAT_CAPACITY);
         let wake = Arc::new(Notify::new());
         let (closed, closed_rx) = watch::channel(false);
+        let (critical, critical_rx) = if game.is_some() {
+            let (tx, rx) = mpsc::channel(gameplay::QUEUE);
+            (Some(tx), Some(rx))
+        } else {
+            (None, None)
+        };
         self.members.insert(
             entity,
             Member {
@@ -404,6 +506,8 @@ impl InstanceDir {
                 viewers: HashSet::new(),
                 chat_credit: 3.,
                 chat_at: Instant::now(),
+                game,
+                critical,
             },
         );
         self.metrics.active_replicas.fetch_add(1, Relaxed);
@@ -415,6 +519,7 @@ impl InstanceDir {
             chat: chat_rx,
             wake,
             closed: closed_rx,
+            critical: critical_rx,
         })
     }
     fn index_add(&mut self, id: i32, r: Replica) {
@@ -717,6 +822,9 @@ pub struct View {
     sampled: usize,
 }
 impl View {
+    pub fn contains(&self, id: i32) -> bool {
+        self.sent.contains_key(&id)
+    }
     async fn flush_packets(
         &mut self,
         output: &mut smolmc_network::transport::TcpOutbound,
@@ -837,6 +945,17 @@ impl View {
                     .send(&presence::spawn(id, &peer.uuid, r.state))
                     .await?;
                 output.send(&presence::pose(id, r.state)).await?;
+                if let Some(game) = &peer.game {
+                    let (equipment, health) = {
+                        let g = game.lock().unwrap();
+                        (
+                            pvp::equipment(id, g.inventory.main(), g.inventory.off()),
+                            pvp::metadata(id, g.health),
+                        )
+                    };
+                    output.send(&equipment).await?;
+                    output.send(&health).await?;
+                }
                 self.sent.insert(
                     id,
                     Sent {
@@ -1158,6 +1277,7 @@ mod tests {
             profile: profile(1),
             pending: pending(replica(8.)),
             reply,
+            game: None,
         });
         d.command(Command::Update {
             entity: 1,

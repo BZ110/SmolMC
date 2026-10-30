@@ -1,6 +1,11 @@
 # 07 — Feature modules, profiles, dependencies and 'near-zero idle' engineering
 
-**Current implementation:** M2B implements editable/read-only profiles with the fixed required dependency closure, rejected unavailable heavy capabilities, creation-time limits and resource metrics. Parked worlds have no worker/timer/watch; this is not a general live-toggle framework. See [M2B evidence](M2B_ENGINEERING_REPORT.md). Root AGENTS.md controls authorization.
+**Current implementation:** M2B implements editable/read-only profiles with the fixed required dependency closure, rejected unavailable heavy capabilities, creation-time limits and resource metrics. Parked worlds have no worker/timer/watch; this is not a general live-toggle framework. See [M2B evidence](M2B_ENGINEERING_REPORT.md). Root AGENTS.md controls authorization. Revised M3 `--pvp on` adds state/critical
+queues only for occupied PvP sessions, with no timer/task per player or world.
+Cooldowns/iframes and the supported flat-roof motion subset advance lazily on
+existing events. `--pvp off` preserves the creative-flight path and allocates no
+combat state or critical-delivery channel. This startup option is not a general
+live feature-toggle framework.
 
 ## Primary user requirement
 Enable/disable **large** optional systems, especially those with nontrivial idle CPU or RAM. 'Off' must mean **no subsystem instances, no scheduled callbacks, no caches, no subscriptions, no per-world ticking allocations** to the greatest practical extent. Core runtime, sockets, authentication, session timers, player state and protocol-required data cannot simply disappear.

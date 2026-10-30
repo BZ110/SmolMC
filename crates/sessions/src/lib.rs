@@ -13,6 +13,7 @@ use smolmc_world::{
 pub mod control;
 #[cfg(all(test, unix))]
 extern crate self as smolmc_sessions;
+pub mod gameplay;
 #[cfg(all(test, unix))]
 #[path = "../../bridge/src/lib.rs"]
 mod java_bridge_fixture;
@@ -80,6 +81,10 @@ pub struct Metrics {
     chat_deliveries: AtomicU64,
     chat_messages: AtomicU64,
     replica_updates: AtomicU64,
+    combat_attacks: AtomicU64,
+    combat_hits: AtomicU64,
+    combat_deaths: AtomicU64,
+    combat_respawns: AtomicU64,
     peak_visible_edges: AtomicUsize,
     visible_edges: AtomicUsize,
     active_replicas: AtomicUsize,
@@ -105,6 +110,10 @@ pub struct Snapshot {
     pub chat_deliveries: u64,
     pub chat_messages: u64,
     pub replica_updates: u64,
+    pub combat_attacks: u64,
+    pub combat_hits: u64,
+    pub combat_deaths: u64,
+    pub combat_respawns: u64,
     pub peak_visible_edges: usize,
     pub visible_edges: usize,
     pub active_replicas: usize,
@@ -131,6 +140,10 @@ impl Metrics {
             chat_deliveries: self.chat_deliveries.load(Relaxed),
             chat_messages: self.chat_messages.load(Relaxed),
             replica_updates: self.replica_updates.load(Relaxed),
+            combat_attacks: self.combat_attacks.load(Relaxed),
+            combat_hits: self.combat_hits.load(Relaxed),
+            combat_deaths: self.combat_deaths.load(Relaxed),
+            combat_respawns: self.combat_respawns.load(Relaxed),
             peak_visible_edges: self.peak_visible_edges.load(Relaxed),
             visible_edges: self.visible_edges.load(Relaxed),
             active_replicas: self.active_replicas.load(Relaxed),
@@ -190,6 +203,7 @@ pub struct RegistrySet {
     tags: Arc<[u8]>,
     biome_id: i32,
     clock_id: i32,
+    player_damage_id: i32,
 }
 impl RegistrySet {
     pub fn load() -> io::Result<Self> {
@@ -206,6 +220,7 @@ impl RegistrySet {
         let mut dimension_id = None;
         let mut biome_id = None;
         let mut clock_id = None;
+        let mut player_damage_id = None;
         for registry in entries {
             let name = registry["registry"]
                 .as_str()
@@ -235,6 +250,12 @@ impl RegistrySet {
                     .iter()
                     .position(|name| name == "minecraft:plains")
                     .map(|i| i as i32);
+            }
+            if name == "minecraft:damage_type" {
+                player_damage_id = names
+                    .iter()
+                    .position(|name| name == "minecraft:player_attack")
+                    .map(|n| n as i32);
             }
             if name == "minecraft:world_clock" {
                 clock_id = names
@@ -274,6 +295,8 @@ impl RegistrySet {
             dimension_id: dimension_id
                 .ok_or_else(|| invalid("overworld dimension type missing"))?,
             encoded_bytes,
+            player_damage_id: player_damage_id
+                .ok_or_else(|| invalid("player attack damage type missing"))?,
             tags,
             biome_id: biome_id.ok_or_else(|| invalid("plains biome missing"))?,
             clock_id: clock_id.ok_or_else(|| invalid("overworld clock missing"))?,
@@ -293,6 +316,8 @@ pub struct Service {
     worlds: Arc<worlds::Worlds>,
     seed: WorldId,
     next_route: AtomicUsize,
+    gameplay: std::sync::OnceLock<gameplay::Config>,
+    gameplay_epoch: Instant,
 }
 
 impl Service {
@@ -320,6 +345,8 @@ impl Service {
             worlds: Arc::new(worlds::Worlds::new(worlds, seed)),
             seed,
             next_route: AtomicUsize::new(0),
+            gameplay: std::sync::OnceLock::new(),
+            gameplay_epoch: Instant::now(),
         })
     }
     /// Create a bounded set of identical arenas and route successful joins round-robin.
@@ -467,6 +494,33 @@ impl Service {
     pub fn invoke_command(&self, command: &str) -> Result<(), control::ControlError> {
         self.worlds.invoke_command(None, command)
     }
+    /// Optional startup arena profile; no world/player timer is constructed.
+    pub fn configure_pvp(&self, config: gameplay::Config) -> io::Result<()> {
+        if !self.worlds.empty()
+            || config.spawn.iter().any(|v| !v.is_finite())
+            || config.spawn[0].abs() > 99950.
+            || config.spawn[2].abs() > 99950.
+            || !(64.0..=512.).contains(&config.spawn[1])
+        {
+            return Err(invalid("invalid/late arena configuration"));
+        }
+        self.gameplay
+            .set(config)
+            .map_err(|_| invalid("arena already configured"))
+    }
+    fn gameplay_config(&self) -> gameplay::Config {
+        self.gameplay.get().copied().unwrap_or_default()
+    }
+    fn player_damage_type(&self) -> i32 {
+        self.registries.player_damage_id
+    }
+    pub fn combat_snapshot(
+        &self,
+        entity: i32,
+        uuid: [u8; 16],
+    ) -> Result<control::CombatSnapshot, control::ControlError> {
+        self.worlds.combat_snapshot(entity, uuid)
+    }
     pub fn registry_bytes(&self) -> usize {
         self.registries.encoded_bytes
     }
@@ -562,7 +616,7 @@ impl Service {
                 entity,
                 self.registries.dimension_id,
                 MAX_PLAYERS as i32,
-                1,
+                if self.gameplay_config().enabled { 2 } else { 1 },
             )),
         )
         .await?;
@@ -752,17 +806,41 @@ impl Service {
         profile: Arc<login::Profile>,
         instance: WorldId,
     ) -> io::Result<()> {
+        let config = self.gameplay_config();
+        let game = config.enabled.then(|| {
+            let mut state = gameplay::State::new(Instant::now(), config.spawn);
+            state.align_clock(self.gameplay_epoch);
+            state.trace = context.trace;
+            Arc::new(Mutex::new(state))
+        });
+        let damage_type = if config.enabled {
+            self.player_damage_type()
+        } else {
+            0
+        };
+        let mut respawning = false;
+        let mut corpse_due: Option<Instant> = None;
         let mut player = player::Player::new(Instant::now());
+        player.spawn_at(config.spawn);
         let mut membership = self
             .worlds
-            .attach_profile(
+            .attach_game(
                 entity,
                 self.worlds
                     .handle(instance)
                     .map_err(|_| invalid("unknown world"))?,
                 Some(Arc::clone(&profile)),
+                game.clone(),
             )
             .map_err(|_| invalid("world membership rejected"))?;
+        if let Some(game) = &game
+            && self.worlds.control_enabled()
+        {
+            game.lock().unwrap().notices = Some(gameplay::Notices {
+                worlds: Arc::clone(&self.worlds),
+                world: membership.handle,
+            });
+        }
         if let Some(commands) = membership.commands.as_mut() {
             let names = commands.borrow_and_update().clone();
             deadline(5, connection.outbound.send(&play::commands(&names))).await?;
@@ -770,13 +848,17 @@ impl Service {
         let mut terrain = membership.terrain.borrow_and_update().clone();
         let mut teleport_id = 1i32;
         for packet in [
-            play::default_spawn([8, 65, 8]),
-            play::abilities(false),
+            play::default_spawn(config.spawn.map(|v| v as i32)),
+            if config.enabled {
+                wire::pvp::abilities()
+            } else {
+                play::abilities(false)
+            },
             play::static_time(self.registries.clock_id),
-            play::center(0, 0),
+            play::center(player.view.center().x, player.view.center().z),
             play::start_loading(),
-            play::position(1, SPAWN, [0.0, 0.0]),
-            presence::player_info(&profile),
+            play::position(1, config.spawn, [0.0, 0.0]),
+            presence::player_info_mode(&profile, if config.enabled { 2 } else { 1 }),
             presence::system(
                 "[System] M2B: chat is a server relay; player-chat signatures are not verified.",
             )
@@ -784,12 +866,30 @@ impl Service {
         ] {
             deadline(5, connection.outbound.send(&packet)).await?;
         }
+        if let Some(game) = &game {
+            let (packet, attributes) = {
+                let g = game.lock().unwrap();
+                (
+                    g.inventory.packet(),
+                    wire::pvp::attributes(entity, g.inventory.main()),
+                )
+            };
+            deadline(5, connection.outbound.send(&packet)).await?;
+            deadline(5, connection.outbound.send(&attributes)).await?;
+            deadline(5, connection.outbound.send(&wire::pvp::health(20.))).await?;
+        }
         let hub = self
             .replication
             .get_or_init(|| async { replication::Hub::start(Arc::clone(&self.metrics)) })
             .await;
         let (mut replica_lease, mut inbox) = hub
-            .join(entity, instance, Arc::clone(&profile), player.replica())
+            .join_game(
+                entity,
+                instance,
+                Arc::clone(&profile),
+                player.replica(),
+                game.clone(),
+            )
             .await?;
         let mut wake = Arc::clone(&inbox.wake);
         let mut peer_view = replication::View::default();
@@ -802,6 +902,11 @@ impl Service {
         let mut packets = 0usize;
         loop {
             let now = Instant::now();
+            if corpse_due.is_some_and(|due| now >= due) {
+                corpse_due = None;
+                player.corpse_visible = false;
+                replica_lease.update(player.replica())?;
+            }
             player.check_deadlines(now)?;
             if *inbox.closed.borrow() {
                 return Err(io::Error::new(
@@ -812,13 +917,21 @@ impl Service {
             // Same-dimension switch: drain old batch/teleport ACKs, leave the old
             // directory, remove old entities/Tab entries and chunks, then re-subscribe.
             let target = *membership.target.borrow_and_update();
-            if target != membership.handle
+            if (target != membership.handle || respawning)
+                && (!player.dead || respawning)
                 && player.pending_batch.is_none()
                 && player.pending_teleport.is_none()
             {
-                membership
-                    .move_to(target)
-                    .map_err(|_| invalid("switch target expired"))?;
+                if target != membership.handle {
+                    membership
+                        .move_to(target)
+                        .map_err(|_| invalid("switch target expired"))?;
+                }
+                if let Some(game) = &game
+                    && let Some(notices) = game.lock().unwrap().notices.as_mut()
+                {
+                    notices.world = membership.handle;
+                }
                 drop(replica_lease);
                 deadline(5, peer_view.clear(&mut connection.outbound)).await?;
                 deadline(5, async {
@@ -835,27 +948,84 @@ impl Service {
                 teleport_id = teleport_id
                     .checked_add(1)
                     .ok_or_else(|| invalid("teleport IDs exhausted"))?;
+                if respawning {
+                    self.metrics.combat_respawns.fetch_add(1, Relaxed);
+                    deadline(
+                        5,
+                        connection
+                            .outbound
+                            .send(&wire::pvp::respawn(self.registries.dimension_id, 2)),
+                    )
+                    .await?;
+                    if let Some(game) = &game {
+                        let mut g = game.lock().unwrap();
+                        g.reset(now, config.spawn);
+                        if let Some(notices) = &g.notices {
+                            notices.worlds.combat_event(
+                                13,
+                                notices.world,
+                                control::PlayerSnapshot::new(entity, &profile, notices.world),
+                                control::CombatNotice {
+                                    state: g.snapshot(),
+                                    source: 0,
+                                    damage: 0.,
+                                },
+                            );
+                        }
+                    }
+                }
+                corpse_due = None;
                 player.switch_world(now, teleport_id);
+                player.spawn_at(config.spawn);
+                if let Some(game) = &game {
+                    game.lock().unwrap().reposition(now, config.spawn);
+                }
                 terrain = membership.terrain.borrow_and_update().clone();
                 (replica_lease, inbox) = hub
-                    .join(entity, target.id, Arc::clone(&profile), player.replica())
+                    .join_game(
+                        entity,
+                        target.id,
+                        Arc::clone(&profile),
+                        player.replica(),
+                        game.clone(),
+                    )
                     .await?;
                 wake = Arc::clone(&inbox.wake);
                 publish_dirty = false;
                 viewer_dirty = false;
                 deadline(5, async {
-                    connection.outbound.send(&play::center(0, 0)).await?;
                     connection
                         .outbound
-                        .send(&play::default_spawn([8, 65, 8]))
+                        .send(&play::center(
+                            player.view.center().x,
+                            player.view.center().z,
+                        ))
+                        .await?;
+                    connection
+                        .outbound
+                        .send(&play::default_spawn(config.spawn.map(|v| v as i32)))
                         .await?;
                     connection.outbound.send(&play::start_loading()).await?;
                     connection
                         .outbound
-                        .send(&play::position(teleport_id, SPAWN, [0.; 2]))
+                        .send(&play::position(teleport_id, config.spawn, [0.; 2]))
                         .await
                 })
                 .await?;
+                if let Some(game) = &game {
+                    let (contents, health, attributes) = {
+                        let g = game.lock().unwrap();
+                        (
+                            g.inventory.packet(),
+                            g.health,
+                            wire::pvp::attributes(entity, g.inventory.main()),
+                        )
+                    };
+                    deadline(5, connection.outbound.send(&contents)).await?;
+                    deadline(5, connection.outbound.send(&attributes)).await?;
+                    deadline(5, connection.outbound.send(&wire::pvp::health(health))).await?;
+                }
+                respawning = false;
             }
             if !terrain.same_snapshot(&membership.terrain.borrow()) {
                 let latest = membership.terrain.borrow_and_update().clone();
@@ -952,6 +1122,9 @@ impl Service {
                 player.batch_sent(Instant::now());
             }
             let mut due = player.next_deadline();
+            if let Some(corpse_due) = corpse_due {
+                due = due.min(corpse_due);
+            }
             if publish_dirty {
                 due = due.min(publish_due);
             }
@@ -960,6 +1133,27 @@ impl Service {
             }
             let packet = tokio::select! {
                 _=tokio::time::sleep_until(due)=>continue,
+                event=critical_message(&mut inbox.critical)=>{
+                    match event? {
+                        gameplay::Delivery::Packets{entity:target,packets,at}=>{
+                            if let Some(target)=target {
+                                deadline(5,peer_view.flush(&mut connection.outbound,&inbox)).await?;
+                                if !peer_view.contains(target){continue;}
+                            }
+                            deadline(5,connection.outbound.send_batch(&packets)).await?;
+                            #[cfg(test)] crate::perf::CRITICAL_WRITE.record(at.elapsed().as_micros() as u64);
+                            #[cfg(not(test))] let _=at;
+                        },
+                        gameplay::Delivery::Died=>{player.dead=true;player.corpse_visible=true;corpse_due=Some(Instant::now()+Duration::from_secs(1));replica_lease.update(player.replica())?;},
+                        gameplay::Delivery::Respawn=>respawning=true,
+                        gameplay::Delivery::SprintStopped=>{
+                            player.sprinting=false;
+                            deadline(5,connection.outbound.send(&presence::pose(entity,player.replica().state))).await?;
+                            replica_lease.update(player.replica())?;
+                        },
+                    }
+                    continue;
+                },
                 names=command_change(&mut membership.commands)=>{
                     deadline(5,connection.outbound.send(&play::commands(&names?))).await?;continue;
                 },
@@ -985,6 +1179,18 @@ impl Service {
                 return Err(invalid("Play packet rate exceeded"));
             }
             self.metrics.play_packets_observed.fetch_add(1, Relaxed);
+            if config.enabled
+                && let Some(action) = wire::pvp::decode(&packet).map_err(malformed)?
+            {
+                replica_lease.action(action, player.replica(), damage_type)?;
+                continue;
+            }
+            if config.enabled
+                && packet.first() == Some(&0x0d)
+                && let Some(game) = &game
+            {
+                game.lock().unwrap().finish_tick();
+            }
             let event = play::decode(&packet).map_err(|error| {
                 if context.trace {
                     let mut r = Reader::new(&packet);
@@ -1054,10 +1260,21 @@ impl Service {
                             .await?;
                         }
                     }
+                    if let Some(game) = &game {
+                        player.on_ground = player.position[1] <= 64.01;
+                        game.lock().unwrap().pose(player.replica().state, now);
+                        replica_lease.pose(player.replica());
+                    }
                     self.metrics.movements.fetch_add(1, Relaxed);
                     publish_dirty = true;
                 }
                 play::Event::Flying(flying) => {
+                    if config.enabled {
+                        if flying {
+                            return Err(invalid("flight disabled in PvP"));
+                        }
+                        continue;
+                    }
                     if player.flying != flying {
                         self.metrics.flight_changes.fetch_add(1, Relaxed);
                     }
@@ -1077,7 +1294,13 @@ impl Service {
                 }
                 play::Event::Input(flags) => {
                     let crouching = flags & 32 != 0;
-                    let sprinting = flags & 64 != 0;
+                    // The sprint key is input intent. Vanilla changes sprint state
+                    // only through PlayerCommand, including after attack cancellation.
+                    let sprinting = if config.enabled {
+                        player.sprinting
+                    } else {
+                        flags & 64 != 0
+                    };
                     if player.crouching != crouching || player.sprinting != sprinting {
                         player.crouching = crouching;
                         player.sprinting = sprinting;
@@ -1085,6 +1308,13 @@ impl Service {
                     }
                 }
                 play::Event::Chat(text) => {
+                    if context.trace
+                        && text.eq_ignore_ascii_case("THAT RIGHT THERE")
+                        && let Some(game) = &game
+                    {
+                        let marker_tick = game.lock().unwrap().tick(now);
+                        eprintln!("pvp_marker connection={} tick={}", context.id, marker_tick);
+                    }
                     player.admit_chat(now)?;
                     replica_lease.chat(text)?;
                 }
@@ -1132,6 +1362,17 @@ fn material_state(material: Material) -> i32 {
     }
 }
 
+async fn critical_message(
+    receiver: &mut Option<tokio::sync::mpsc::Receiver<gameplay::Delivery>>,
+) -> io::Result<gameplay::Delivery> {
+    match receiver {
+        Some(rx) => rx
+            .recv()
+            .await
+            .ok_or_else(|| invalid("gameplay directory closed")),
+        None => std::future::pending().await,
+    }
+}
 // Disabled bridge branches never wake or allocate a channel/cache.
 async fn command_change(
     receiver: &mut Option<tokio::sync::watch::Receiver<Arc<[String]>>>,

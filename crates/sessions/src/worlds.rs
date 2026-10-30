@@ -21,6 +21,7 @@ struct Player {
     world: WorldId,
     target: watch::Sender<WorldHandle>,
     control: Option<(Arc<Profile>, mpsc::Sender<String>)>,
+    game: Option<crate::gameplay::Shared>,
 }
 struct Catalog {
     manager: WorldManager,
@@ -28,7 +29,6 @@ struct Catalog {
     players: HashMap<i32, Player>,
     routes: Vec<WorldId>,
     commands: HashMap<String, u64>,
-    sequence: u64,
 }
 pub struct Worlds {
     catalog: Mutex<Catalog>,
@@ -52,7 +52,6 @@ impl Worlds {
                 players: HashMap::new(),
                 routes: vec![seed],
                 commands: HashMap::new(),
-                sequence: 0,
             }),
             events: OnceLock::new(),
         }
@@ -183,11 +182,21 @@ impl Worlds {
     ) -> Result<Membership, WorldError> {
         self.attach_profile(entity, handle, None)
     }
+    #[cfg(test)]
     pub fn attach_profile(
         self: &Arc<Self>,
         entity: i32,
         handle: WorldHandle,
         profile: Option<Arc<Profile>>,
+    ) -> Result<Membership, WorldError> {
+        self.attach_game(entity, handle, profile, None)
+    }
+    pub fn attach_game(
+        self: &Arc<Self>,
+        entity: i32,
+        handle: WorldHandle,
+        profile: Option<Arc<Profile>>,
+        game: Option<crate::gameplay::Shared>,
     ) -> Result<Membership, WorldError> {
         let mut c = self.catalog.lock().unwrap();
         c.manager.validate(handle)?;
@@ -214,6 +223,7 @@ impl Worlds {
                 world: handle.id,
                 target,
                 control,
+                game,
             },
         );
         self.emit(&mut c, 7, handle, snapshot, String::new(), None);
@@ -236,9 +246,16 @@ impl Worlds {
         self.events.get_or_init(|| {
             let (tx, _) = broadcast::channel(EVENT_CAPACITY);
             let (commands, _) = watch::channel(Arc::from([]));
-            Events { tx, commands }
+            Events {
+                tx,
+                commands,
+                sequence: Mutex::new(0),
+            }
         });
         Ok(())
+    }
+    pub fn control_enabled(&self) -> bool {
+        self.events.get().is_some()
     }
     pub fn events(&self) -> Result<broadcast::Receiver<Arc<ControlEvent>>, ControlError> {
         self.events
@@ -248,7 +265,7 @@ impl Worlds {
     }
     fn emit(
         &self,
-        c: &mut Catalog,
+        _c: &mut Catalog,
         kind: u8,
         world: WorldHandle,
         player: Option<PlayerSnapshot>,
@@ -256,15 +273,15 @@ impl Worlds {
         owner: Option<u64>,
     ) {
         if let Some(events) = self.events.get() {
-            c.sequence += 1;
-            let _ = events.tx.send(Arc::new(ControlEvent {
-                sequence: c.sequence,
+            events.emit(ControlEvent {
+                sequence: 0,
                 kind,
                 world,
                 player,
                 text,
                 owner,
-            }));
+                combat: None,
+            });
         }
     }
     pub fn list(&self) -> Vec<WorldHandle> {
@@ -296,6 +313,42 @@ impl Worlds {
                     .get_block(*p, |y| smolmc_world::VirtualStone.block(y))
             })
             .collect())
+    }
+    pub fn combat_snapshot(
+        &self,
+        entity: i32,
+        uuid: [u8; 16],
+    ) -> Result<crate::control::CombatSnapshot, ControlError> {
+        let game = {
+            let c = self.catalog.lock().unwrap();
+            let player = c.players.get(&entity).ok_or(WorldError::UnknownPlayer)?;
+            let (profile, _) = player.control.as_ref().ok_or(ControlError::Disabled)?;
+            if profile.uuid != uuid {
+                return Err(WorldError::StaleHandle.into());
+            }
+            player.game.clone().ok_or(ControlError::Disabled)?
+        };
+        let state = game.lock().unwrap().snapshot();
+        Ok(state)
+    }
+    pub fn combat_event(
+        &self,
+        kind: u8,
+        world: WorldHandle,
+        player: crate::control::PlayerSnapshot,
+        notice: crate::control::CombatNotice,
+    ) {
+        if let Some(events) = self.events.get() {
+            events.emit(ControlEvent {
+                sequence: 0,
+                kind,
+                world,
+                player: Some(player),
+                text: String::new(),
+                owner: None,
+                combat: Some(notice),
+            });
+        }
     }
     pub fn players(&self) -> Vec<PlayerSnapshot> {
         let c = self.catalog.lock().unwrap();

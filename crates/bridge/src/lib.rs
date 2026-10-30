@@ -27,7 +27,7 @@ use zeroize::Zeroizing;
 const IO_TIMEOUT: Duration = Duration::from_secs(2);
 const PEERS: usize = 4;
 static NEXT_PEER: AtomicU64 = AtomicU64::new(1);
-pub const API_VERSION: &str = "0.1.0";
+pub const API_VERSION: &str = "0.2.0";
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Access {
     Observe,
@@ -274,10 +274,10 @@ async fn peer(socket: UnixStream, state: Arc<State>, owner: u64) -> io::Result<(
         write(&mut output, &failure(id, 0, 3, "authentication failed")).await?;
         return Err(invalid());
     }
-    if major != 1 || minor != 0 {
+    if major != 1 || minor > 1 {
         write(
             &mut output,
-            &failure(id, 0, 2, "requires bridge schema 1.0"),
+            &failure(id, 0, 2, "requires bridge schema 1.0 or 1.1"),
         )
         .await?;
         return Err(invalid());
@@ -286,8 +286,8 @@ async fn peer(socket: UnixStream, state: Arc<State>, owner: u64) -> io::Result<(
     let mut p = Vec::new();
     p.extend(state.service.server_id());
     u16(&mut p, 1);
-    u16(&mut p, 0);
-    string(&mut p, API_VERSION);
+    u16(&mut p, minor);
+    string(&mut p, if minor == 0 { "0.1.0" } else { API_VERSION });
     p.push(u8::from(state.access == Access::Control));
     write(&mut output, &response(id, 0, 0, &p)).await?;
     let _registration = Registration {
@@ -303,7 +303,9 @@ async fn peer(socket: UnixStream, state: Arc<State>, owner: u64) -> io::Result<(
             event=next_event(&mut events)=>{
                 let event=event?;
                 if event.owner.is_none_or(|id|id==owner)&&mask&(1<<event.kind)!=0 {
-                    let mut out=vec![3];u64(&mut out,event.sequence);out.push(event.kind);world(&mut out,event.world);out.push(u8::from(event.player.is_some()));if let Some(player)=&event.player {codec::player(&mut out,player);}string(&mut out,&event.text);write(&mut output,&out).await?;
+                    let mut out=vec![3];u64(&mut out,event.sequence);out.push(event.kind);world(&mut out,event.world);out.push(u8::from(event.player.is_some()));if let Some(player)=&event.player {codec::player(&mut out,player);}string(&mut out,&event.text);
+                    if let Some(notice)=&event.combat {combat(&mut out,notice.state);out.extend(notice.source.to_be_bytes());out.extend(notice.damage.to_be_bytes());}
+                    write(&mut output,&out).await?;
                 }
                 continue;
             }
@@ -333,6 +335,19 @@ async fn peer(socket: UnixStream, state: Arc<State>, owner: u64) -> io::Result<(
                 continue;
             }
         };
+        if minor == 0
+            && matches!(
+                request,
+                Request::Combat(..) | Request::Subscribe(0x800..=u32::MAX)
+            )
+        {
+            write(
+                &mut output,
+                &failure(id, op, 8, "requires bridge schema 1.1"),
+            )
+            .await?;
+            continue;
+        }
         if state.access != Access::Control && request.mutates() {
             write(&mut output, &failure(id, op, 3, "control grant required")).await?;
             continue;
@@ -378,6 +393,13 @@ async fn next_event(
         None => std::future::pending().await,
     }
 }
+fn combat(out: &mut Vec<u8>, s: smolmc_sessions::control::CombatSnapshot) {
+    out.extend(s.health.to_be_bytes());
+    out.push(u8::from(s.dead));
+    out.push(s.selected);
+    out.extend(s.main.to_be_bytes());
+    out.extend(s.off.to_be_bytes());
+}
 enum Request {
     Default,
     Create(WorldProfile),
@@ -397,6 +419,7 @@ enum Request {
     Unregister(String),
     Invoke(String),
     Worlds,
+    Combat(i32, [u8; 16]),
 }
 impl Request {
     fn parse(op: u8, r: &mut Reader<'_>) -> io::Result<Self> {
@@ -448,7 +471,7 @@ impl Request {
             }
             13 => {
                 let mask = r.u32()?;
-                if mask & !0x7fe != 0 {
+                if mask & !0x3ffe != 0 {
                     return Err(invalid());
                 }
                 Self::Subscribe(mask)
@@ -458,6 +481,7 @@ impl Request {
             16 => Self::Unregister(r.string(32)?.to_owned()),
             17 => Self::Invoke(r.string(256)?.to_owned()),
             18 => Self::Worlds,
+            19 => Self::Combat(r.i32()?, r.take(16)?.try_into().unwrap()),
             _ => return Err(invalid()),
         };
         r.end()?;
@@ -473,6 +497,7 @@ impl Request {
                 | Self::Subscribe(_)
                 | Self::Unsubscribe
                 | Self::Worlds
+                | Self::Combat(..)
         )
     }
     fn edits(&self) -> usize {
@@ -485,6 +510,7 @@ impl Request {
     fn execute(self, s: &Service, owner: u64) -> Result<Vec<u8>, ControlError> {
         let mut out = Vec::new();
         match self {
+            Self::Combat(entity, uuid) => combat(&mut out, s.combat_snapshot(entity, uuid)?),
             Self::Default => world(&mut out, s.default_world()?),
             Self::Create(p) => world(&mut out, s.create_world_with_profile(p)?),
             Self::Clone(w) => world(&mut out, s.clone_world(w)?),
