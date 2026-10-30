@@ -1,0 +1,27 @@
+[workspace]
+members = ["crates/protocol-777", "crates/network", "crates/auth", "crates/world", "crates/chunks", "crates/sessions", "crates/server"]
+resolver = "3"
+
+[workspace.package]
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.99"
+publish = false
+
+[workspace.dependencies]
+serde_json = "1.0"
+openssl = "0.10.81"
+flate2 = { version = "1.1.10", default-features = false, features = ["miniz_oxide"] }
+reqwest = { version = "0.13.5", default-features = false, features = ["native-tls-no-alpn"] }
+zeroize = "1.8"
+tokio = { version = "1.48", features = ["rt", "macros", "net", "io-util", "time", "signal", "sync"] }
+smolmc-protocol-777 = { path = "crates/protocol-777" }
+smolmc-network = { path = "crates/network" }
+smolmc-auth = { path = "crates/auth" }
+smolmc-sessions = { path = "crates/sessions" }
+smolmc-world = { path = "crates/world" }
+smolmc-chunks = { path = "crates/chunks" }
+
+[workspace.lints.rust]
+unsafe_code = "forbid"
+

@@ -1,0 +1,9 @@
+id,scenario,load,metrics,hypothesis
+B01,idle_instances,"0/1/10/100/1000 instances, no players",RSS; wakeups/s; task count; CPU time,Proves absence of per-instance idle loops
+B02,static_templates,1/10/100/1000 cloned flat worlds,RSS per clone; shared allocations; clone latency,Proves actual sharing
+B03,sparse_edits,1/100/10000 edits per arena,overlay bytes; update latency; rollback correctness,COW crossover
+B04,high_churn,10000 create/reset/destroy cycles,steady-state RSS; outstanding handles/timers,Leak detection
+B05,player_active,1/10/100/500 clients distributed across worlds,CPU; p95/p99 update delay; packet rate,Active scaling
+B06,plugin_bridge,Java bridge off/on/stalled/killed,JVM RSS; IPC latency; core resilience,Isolation and overhead
+B07,packet_robustness,malformed/oversized/misordered packets,memory peak; panic count; disconnect correctness,Safety under abuse
+B08,baseline,same environment vs Paper/Folia/Pumpkin/Minestom,RSS; p99 latency; throughput; CPU,Honest comparative claim

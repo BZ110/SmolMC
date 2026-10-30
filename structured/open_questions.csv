@@ -1,0 +1,12 @@
+id,priority,question,suggested_default,status
+Q01,high,What is the minimum client version?,26.3 protocol 777,documented default
+Q02,critical,Is real online authentication required?,yes,documented default
+Q03,high,Should initial world be editable?,no for first vertical slice,documented default
+Q04,critical,Which JVM compatibility promise?,"new Java SDK, NOT arbitrary Bukkit JAR",documented default
+Q05,high,How many instances/players target?,"benchmark range, no guaranteed number",unresolved
+Q06,high,Which template format?,"virtual flat first, compiled/import later",provisional
+Q07,high,What per-world clock semantics?,paused while parked unless real-time task,provisional
+Q08,medium,Do Java SDK users launch or attach?,"both, explicit facade",provisional
+Q09,critical,Which redistributable registry data source?,license review before publish,unresolved
+Q10,high,What operating system is main performance target?,"Linux x86_64 production, macOS dev",provisional
+Q11,high,Do survival worlds need persistent changes?,future explicit optional backends,provisional

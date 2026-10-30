@@ -1,0 +1,74 @@
+{
+  "status": "proposal_not_implemented",
+  "profiles": {
+    "minimal-creative": {
+      "required": [
+        "protocol_framing",
+        "online_auth",
+        "registry_config",
+        "player_movement",
+        "world_registry",
+        "stone_generator",
+        "chunk_streaming",
+        "creative_flight",
+        "system_chat",
+        "player_visibility"
+      ],
+      "disabled": [
+        "block_editing",
+        "persistence",
+        "terrain_generation",
+        "block_physics",
+        "redstone",
+        "fluids",
+        "random_ticks",
+        "mob_ai",
+        "entity_system",
+        "weather",
+        "survival",
+        "java_bridge",
+        "wasm_plugins",
+        "native_plugins",
+        "autosave"
+      ]
+    },
+    "static-pvp": {
+      "inherits": "minimal-creative",
+      "future_options": [
+        "player_collision",
+        "combat"
+      ]
+    },
+    "creative-builder": {
+      "inherits": "minimal-creative",
+      "enable_when_implemented": [
+        "template_cow",
+        "block_editing"
+      ],
+      "future_options": [
+        "persistence"
+      ]
+    },
+    "survival-experimental": {
+      "inherits": "creative-builder",
+      "enable_when_implemented": [
+        "block_physics",
+        "entity_system",
+        "inventory",
+        "survival",
+        "mob_ai",
+        "fluids",
+        "redstone",
+        "random_ticks",
+        "weather",
+        "persistence"
+      ],
+      "warning": "NOT vanilla parity"
+    }
+  },
+  "notes": [
+    "Minecraft protocol feature flags != engine capability toggles",
+    "Profile dependency graph must be validated at startup",
+    "Runnable version M1 needs required capabilities only"
+  ]
+}

@@ -1,0 +1,43 @@
+{
+  "input_name": "unz.zip",
+  "sha256": "ee0dba50bb7248bb39ab3fee20caf4f7551b970f32f30844c99269b2ce9be74c",
+  "files_under_unz": 14939,
+  "uncompressed_bytes_under_unz": 41007908,
+  "java_files": 5037,
+  "other_file_types": {
+    "json": 8372,
+    "DS_Store": 9,
+    "jfc": 1,
+    "MF": 1,
+    "SF": 1,
+    "(none)": 1,
+    "RSA": 1,
+    "mcassetsroot": 2,
+    "java": 5037,
+    "nbt": 1511,
+    "mcmeta": 3
+  },
+  "version_json": {
+    "id": "26.3",
+    "name": "26.3",
+    "world_version": 5023,
+    "series_id": "main",
+    "protocol_version": 777,
+    "pack_version": {
+      "resource_major": 97,
+      "resource_minor": 1,
+      "data_major": 121,
+      "data_minor": 0
+    },
+    "build_time": "2026-09-15T11:20:48+00:00",
+    "java_component": "java-runtime-epsilon",
+    "java_version": 25,
+    "stable": true,
+    "use_editor": false
+  },
+  "notes": [
+    "Metadata only; supplied proprietary source/registry content not copied into research pack.",
+    "Counts ignore macOS metadata __MACOSX entries.",
+    "Derived java path inventory is navigational only."
+  ]
+}
