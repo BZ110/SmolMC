@@ -34,6 +34,7 @@ async fn run() -> io::Result<()> {
         ..Config::default()
     };
     let mut instances = 1usize;
+    let mut world_profile = smolmc_sessions::WorldProfile::default();
     let mut args = std::env::args().skip(1);
     while let Some(arg) = args.next() {
         match arg.as_str() {
@@ -56,6 +57,18 @@ async fn run() -> io::Result<()> {
                     .ok_or_else(|| {
                         io::Error::new(io::ErrorKind::InvalidInput, "--instances needs 1..4096")
                     })?;
+            }
+            "--world-profile" => {
+                world_profile = match args.next().as_deref() {
+                    Some("editable") => smolmc_sessions::WorldProfile::editable(),
+                    Some("read-only") => smolmc_sessions::WorldProfile::read_only(),
+                    _ => {
+                        return Err(io::Error::new(
+                            io::ErrorKind::InvalidInput,
+                            "--world-profile needs editable or read-only",
+                        ));
+                    }
+                };
             }
             "--trace-connections" => config.trace_connections = true,
             "--max-connections" | "--connection-rate" | "--per-ip-rate" => {
@@ -93,7 +106,7 @@ async fn run() -> io::Result<()> {
             }
             "--help" | "-h" => {
                 println!(
-                    "smolmc [--bind IP:PORT] [--instances N] [--trace-connections] [--max-connections N] [--connection-rate N] [--per-ip-rate N]\nM2A candidate: Minecraft 26.3 protocol 777, online login, immutable stone, creative flight, player visibility and system chat.\nJoins route round-robin across N isolated arenas (default 1). No inventory or world simulation.\nDefaults: loopback 127.0.0.1:25565, 512 connections, 256 accepts/s, 32 accepts/IP/s. Ctrl-C or SIGTERM stops all connections."
+                    "smolmc [--bind IP:PORT] [--instances N] [--world-profile editable|read-only] [--trace-connections] [--max-connections N] [--connection-rate N] [--per-ip-rate N]\nM2B: Minecraft 26.3 protocol 777, online login, immutable stone, creative flight, player visibility and system chat.\nJoins route round-robin across N isolated arenas (default 1). No inventory or world simulation.\nDefaults: loopback 127.0.0.1:25565, 512 connections, 256 accepts/s, 32 accepts/IP/s. Ctrl-C or SIGTERM stops all connections."
                 );
                 return Ok(());
             }
@@ -105,11 +118,14 @@ async fn run() -> io::Result<()> {
             }
         }
     }
-    let service = Arc::new(smolmc_sessions::Service::with_instances(instances)?);
+    let service = Arc::new(smolmc_sessions::Service::with_profiled_instances(
+        instances,
+        world_profile,
+    )?);
     let listener = TcpListener::bind(bind).await?;
     let metrics = Arc::new(Metrics::default());
     eprintln!(
-        "ready address={} minecraft=26.3 protocol=777 stage=M2A-candidate online=true max_connections={} registry_bytes={} chunk_template_bytes={}",
+        "ready address={} minecraft=26.3 protocol=777 stage=M2B online=true max_connections={} registry_bytes={} chunk_template_bytes={}",
         listener.local_addr()?,
         config.max_connections,
         service.registry_bytes(),

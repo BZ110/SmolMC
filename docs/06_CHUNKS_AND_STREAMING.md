@@ -1,5 +1,7 @@
 # 06 — Chunks, palettes, network streaming and light
 
+**Current implementation:** M2B retains the existing shared coordinate-independent stone suffix and registries. Indexed sparse corrections follow base chunks; no per-world dense chunks or speculative new wire encoding/cache is introduced. See [M2B evidence](M2B_ENGINEERING_REPORT.md). Root AGENTS.md controls authorization.
+
 ## A stone world is not a 'single packet'
 The client expects valid world bootstrap and chunk encoding. Chunk sections contain block-state storage and biomes; chunk output may require heightmaps, lighting masks/arrays and block entity data structures, depending on the exact 26.3 specification. Incorrect registry IDs or bit-packed palettes cause disconnects or visual corruption. The primary deliverable is a well-tested encoder **not** a general-purpose generator.
 

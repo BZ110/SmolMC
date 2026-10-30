@@ -15,6 +15,7 @@ mod m1d_probe;
 mod player;
 mod replication;
 mod worlds;
+pub use smolmc_world::WorldProfile;
 use std::{
     collections::HashSet,
     io,
@@ -28,6 +29,7 @@ use tokio::{
     sync::{OwnedSemaphorePermit, Semaphore},
     time::{Instant, timeout},
 };
+pub use worlds::WorldResources;
 
 const HANDSHAKE_SECONDS: u64 = 5;
 const LOGIN_SECONDS: u64 = 15;
@@ -287,10 +289,13 @@ pub struct Service {
 
 impl Service {
     pub fn new() -> io::Result<Self> {
+        Self::new_profile(smolmc_world::WorldProfile::default())
+    }
+    fn new_profile(profile: smolmc_world::WorldProfile) -> io::Result<Self> {
         let metrics = Arc::new(Metrics::default());
         let registries = RegistrySet::load()?;
         let stone = StoneChunk::new(registries.biome_id);
-        let (worlds, seed) = Self::bootstrap_worlds(&registries)?;
+        let (worlds, seed) = Self::bootstrap_worlds(&registries, profile)?;
         Ok(Self {
             auth: Auth::new()?,
             registries,
@@ -311,22 +316,31 @@ impl Service {
     }
     /// Create a bounded set of identical arenas and route successful joins round-robin.
     pub fn with_instances(count: usize) -> io::Result<Self> {
+        Self::with_profiled_instances(count, smolmc_world::WorldProfile::default())
+    }
+    pub fn with_profiled_instances(
+        count: usize,
+        profile: smolmc_world::WorldProfile,
+    ) -> io::Result<Self> {
         if !(1..=smolmc_world::instance_limit()).contains(&count) {
             return Err(io::Error::new(
                 io::ErrorKind::InvalidInput,
                 "instances must be 1..4096",
             ));
         }
-        let service = Self::new()?;
+        let service = Self::new_profile(profile)?;
         for _ in 1..count {
             service
-                .create_world()
+                .create_world_with_profile(profile)
                 .map_err(|_| io::Error::other("world creation failed"))?;
         }
         Ok(service)
     }
-    fn bootstrap_worlds(registries: &RegistrySet) -> io::Result<(WorldManager, WorldId)> {
-        // M2A: seed one template + a single bootstrap instance (WorldId 1). No mutable
+    fn bootstrap_worlds(
+        registries: &RegistrySet,
+        profile: smolmc_world::WorldProfile,
+    ) -> io::Result<(WorldManager, WorldId)> {
+        // M2A: seed one template + a single bootstrap instance (process-unique identity). No mutable
         // world state flows through the replication layer here, so construction is benign.
         let mut worlds = WorldManager::new();
         // create_instance + the template dimension use BlockPos (i32) coordinates; SPAWN is
@@ -346,7 +360,7 @@ impl Service {
             .declare_template(TemplateId(1), signature)
             .map_err(|e| io::Error::other(format!("world bootstrap failed: {e:?}")))?;
         let seed = worlds
-            .create_instance(TemplateId(1), spawn)
+            .create_profiled(TemplateId(1), spawn, profile)
             .map_err(|e| io::Error::other(format!("world bootstrap failed: {e:?}")))?;
         Ok((worlds, seed))
     }
@@ -375,6 +389,31 @@ impl Service {
     /// A target destroyed/reset before commit causes safe session closure.
     pub fn switch_player(&self, entity: i32, world: WorldHandle) -> Result<(), WorldError> {
         self.worlds.switch(entity, world)
+    }
+    pub fn create_world_with_profile(
+        &self,
+        profile: smolmc_world::WorldProfile,
+    ) -> Result<WorldHandle, WorldError> {
+        self.worlds.create_profiled(profile)
+    }
+    pub fn clone_world(&self, source: WorldHandle) -> Result<WorldHandle, WorldError> {
+        self.worlds.clone_world(source)
+    }
+    pub fn park_world(&self, world: WorldHandle) -> Result<(), WorldError> {
+        self.worlds.park(world)
+    }
+    pub fn edit_world_batch(
+        &self,
+        world: WorldHandle,
+        edits: &[([i32; 3], Material)],
+    ) -> Result<(), WorldError> {
+        self.worlds.edit_batch(world, edits)
+    }
+    pub fn world_resources(&self, world: WorldHandle) -> Result<WorldResources, WorldError> {
+        self.worlds.resources(world)
+    }
+    pub fn world_overlay_memory(&self) -> smolmc_world::OverlayMemory {
+        self.worlds.memory()
     }
     pub fn registry_bytes(&self) -> usize {
         self.registries.encoded_bytes
@@ -414,9 +453,9 @@ impl Service {
                 context.login_rejected();
                 deadline(
                     HANDSHAKE_SECONDS,
-                    connection.outbound.send(&login::disconnect_login(
-                        "Transfers are not supported in M1D.",
-                    )),
+                    connection
+                        .outbound
+                        .send(&login::disconnect_login("Transfers are not supported.")),
                 )
                 .await?;
                 return connection.outbound.shutdown().await;
@@ -451,7 +490,7 @@ impl Service {
         }
         if let Err(error) = deadline(CONFIG_SECONDS, self.configure(&mut connection)).await {
             let message = if error.kind() == io::ErrorKind::Unsupported {
-                "M1D requires the vanilla minecraft:core:26.3 known pack."
+                "SmolMC requires the vanilla minecraft:core:26.3 known pack."
             } else {
                 "Configuration failed or exceeded its deadline."
             };
@@ -502,7 +541,7 @@ impl Service {
                 io::ErrorKind::InvalidData | io::ErrorKind::TimedOut
             )
         {
-            let _=deadline(1,connection.outbound.send(&login::disconnect_common(0x20,"M1D connection exceeded a protocol, resource or acknowledgement limit. Inventory editing and gameplay interactions remain unsupported."))).await;
+            let _=deadline(1,connection.outbound.send(&login::disconnect_common(0x20,"Connection exceeded a protocol, resource or acknowledgement limit. Inventory editing and gameplay interactions remain unsupported."))).await;
         }
         result
     }
@@ -516,7 +555,7 @@ impl Service {
         connection
             .outbound
             .send(&wire::status_response_with(
-                "SmolMC M1D: stone / players / system chat",
+                "SmolMC M2B: isolated worlds / players / system chat",
                 count,
                 MAX_PLAYERS,
             ))
@@ -671,7 +710,7 @@ impl Service {
                     .map_err(|_| invalid("unknown world"))?,
             )
             .map_err(|_| invalid("world membership rejected"))?;
-        let mut terrain = Arc::clone(&membership.terrain.borrow_and_update());
+        let mut terrain = membership.terrain.borrow_and_update().clone();
         let mut teleport_id = 1i32;
         for packet in [
             play::default_spawn([8, 65, 8]),
@@ -682,7 +721,7 @@ impl Service {
             play::position(1, SPAWN, [0.0, 0.0]),
             presence::player_info(&profile),
             presence::system(
-                "[System] M2A: chat is a server relay; player-chat signatures are not verified.",
+                "[System] M2B: chat is a server relay; player-chat signatures are not verified.",
             )
             .map_err(malformed)?,
         ] {
@@ -740,7 +779,7 @@ impl Service {
                     .checked_add(1)
                     .ok_or_else(|| invalid("teleport IDs exhausted"))?;
                 player.switch_world(now, teleport_id);
-                terrain = Arc::clone(&membership.terrain.borrow_and_update());
+                terrain = membership.terrain.borrow_and_update().clone();
                 (replica_lease, inbox) = hub
                     .join(entity, target.id, Arc::clone(&profile), player.replica())
                     .await?;
@@ -761,22 +800,25 @@ impl Service {
                 })
                 .await?;
             }
-            if !Arc::ptr_eq(&terrain, &membership.terrain.borrow()) {
-                let latest = Arc::clone(&membership.terrain.borrow_and_update());
+            if !terrain.same_snapshot(&membership.terrain.borrow()) {
+                let latest = membership.terrain.borrow_and_update().clone();
                 deadline(5, async {
-                    for (pos, _) in latest
-                        .iter()
-                        .chain(terrain.iter().filter(|(pos, _)| !latest.contains_key(*pos)))
-                    {
+                    for (pos, _) in latest.edits().chain(
+                        terrain
+                            .edits()
+                            .filter(|(pos, _)| latest.override_at(*pos).is_none()),
+                    ) {
                         let chunk = ChunkPos {
                             x: pos[0].div_euclid(16),
                             z: pos[2].div_euclid(16),
                         };
-                        if player.view.contains(chunk) && terrain.get(pos) != latest.get(pos) {
-                            let material = latest.get(pos).unwrap_or(&Material::Stone);
+                        if player.view.contains(chunk)
+                            && terrain.override_at(pos) != latest.override_at(pos)
+                        {
+                            let material = latest.override_at(pos).unwrap_or(Material::Stone);
                             connection
                                 .outbound
-                                .send(&play::block_correction(*pos, material_state(*material)))
+                                .send(&play::block_correction(pos, material_state(material)))
                                 .await?;
                         }
                     }
@@ -833,17 +875,11 @@ impl Service {
                         self.stone.encode(pos, &mut scratch);
                         connection.outbound.send(&scratch).await?;
                         // Replay bounded instance edits after shared base bytes, before batch completion.
-                        for (block, material) in terrain.iter() {
-                            if block[0].div_euclid(16) == pos.x && block[2].div_euclid(16) == pos.z
-                            {
-                                connection
-                                    .outbound
-                                    .send(&play::block_correction(
-                                        *block,
-                                        material_state(*material),
-                                    ))
-                                    .await?;
-                            }
+                        for (block, material) in terrain.chunk_edits(pos) {
+                            connection
+                                .outbound
+                                .send(&play::block_correction(block, material_state(material)))
+                                .await?;
                         }
                         if !player.view.insert(pos) {
                             return Err(invalid("chunk subscription capacity violated"));
@@ -991,13 +1027,13 @@ impl Service {
                     {
                         return Err(invalid("block action outside subscription or reach"));
                     }
-                    let state = material_state(*terrain.get(&pos).unwrap_or(&if pos[1] < SURFACE
-                        && pos[1] >= MIN_Y
-                    {
-                        Material::Stone
-                    } else {
-                        Material::Air
-                    }));
+                    let state = material_state(terrain.override_at(pos).unwrap_or(
+                        if pos[1] < SURFACE && pos[1] >= MIN_Y {
+                            Material::Stone
+                        } else {
+                            Material::Air
+                        },
+                    ));
                     deadline(5, async {
                         connection.outbound.send(&play::block_ack(sequence)).await?;
                         connection

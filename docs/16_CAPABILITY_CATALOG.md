@@ -1,5 +1,7 @@
 # 16 — Feature-capability catalog and disablement matrix
 
+**Current implementation:** The table below is the historical M1/research capability plan. M2B now implements internal sparse COW world edits, profiles, limits and metrics, while client placement, physics, Java, plugins, persistence and survival remain unavailable. See [M2B evidence](M2B_ENGINEERING_REPORT.md). Root AGENTS.md controls authorization.
+
 ## Interpretation
 `Required` means non-optional for the announced **first runnable milestone**, not that every mechanic is permanently baked into the protocol library. `Deferred` means documentation exists but NO feature implementation is authorized. Runtime scope = global/world/connection. Policies: `build`, `restart`, `reload`, `quiesce`, `immediate`. Costs are **hypotheses to benchmark**, not quantitative claims.
 

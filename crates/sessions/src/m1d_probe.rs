@@ -22,10 +22,22 @@ impl Server {
         Self::partitioned(1).await
     }
     async fn partitioned(count: usize) -> Self {
+        Self::partitioned_mode(count, false).await
+    }
+    async fn partitioned_mode(count: usize, cloned: bool) -> Self {
         let service = Arc::new(Service::new().unwrap());
         let mut worlds = vec![service.default_world().unwrap()];
+        if cloned {
+            service
+                .edit_world(worlds[0], [8, 62, 8], Material::Air)
+                .unwrap();
+        }
         for _ in 1..count {
-            worlds.push(service.create_world().unwrap());
+            worlds.push(if cloned {
+                service.clone_world(worlds[0]).unwrap()
+            } else {
+                service.create_world().unwrap()
+            });
         }
         let routes = Arc::new(worlds.clone());
         let network = Arc::new(NetworkMetrics::default());
@@ -568,4 +580,63 @@ async fn m2a_wire_isolation_edits_switch_reset_destroy_and_cleanup() {
     assert_eq!(n.protocol_errors, 0);
     assert_eq!(n.timeouts, 0);
     assert_eq!(n.task_failures, 0);
+}
+
+#[tokio::test]
+async fn m2b_cloned_worlds_replay_shared_edits_then_diverge_on_the_wire() {
+    let server = Server::partitioned_mode(2, true).await;
+    let a_world = server.worlds[0];
+    let b_world = server.worlds[1];
+    let pos = [8, 62, 8];
+    let shared = server.service.world_overlay_memory().charged_bytes;
+    let a = Client::start(server.address, false, false).await;
+    let b = Client::start(server.address, false, false).await;
+    let c = Client::start(server.address, false, false).await;
+    let d = Client::start(server.address, false, false).await;
+    for client in [&a, &b, &c, &d] {
+        client.wait(|o| o.blocks.get(&pos) == Some(&0)).await;
+    }
+    assert_eq!(server.service.world_overlay_memory().charged_bytes, shared);
+    server
+        .service
+        .edit_world_batch(
+            a_world,
+            &[(pos, Material::Stone), ([-1, 62, -17], Material::Air)],
+        )
+        .unwrap();
+    for client in [&a, &c] {
+        client
+            .wait(|o| o.blocks.get(&pos) == Some(&1) && o.blocks.get(&[-1, 62, -17]) == Some(&0))
+            .await;
+    }
+    for client in [&b, &d] {
+        assert_eq!(client.observe().blocks.get(&pos), Some(&0));
+        assert!(!client.observe().blocks.contains_key(&[-1, 62, -17]));
+    }
+    assert!(!a.stop().await.server_closed);
+    assert!(!b.stop().await.server_closed);
+    assert!(!c.stop().await.server_closed);
+    assert!(!d.stop().await.server_closed);
+    timeout(Duration::from_secs(2), async {
+        while !server.service.worlds.empty() {
+            tokio::task::yield_now().await;
+        }
+    })
+    .await
+    .unwrap();
+    server.service.destroy_world(a_world).unwrap();
+    server.service.destroy_world(b_world).unwrap();
+    assert_eq!(server.service.world_overlay_memory().charged_bytes, 0);
+    let (s, n) = server.stop().await;
+    assert_eq!(s.active_replicas + s.visible_edges, 0);
+    assert_eq!(
+        (
+            n.active,
+            n.frame_bytes_retained,
+            n.protocol_errors,
+            n.timeouts,
+            n.task_failures
+        ),
+        (0, 0, 0, 0, 0)
+    );
 }

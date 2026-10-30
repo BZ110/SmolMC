@@ -5,7 +5,7 @@ M1B,Legitimate online login/configuration,implemented_and_validated_m1b_only,Aut
 M1C,Stone world and creative flight,implemented_and_validated_m1c_only,Visible chunks and cross-chunk flight work
 M1D,Player visibility and messaging,implemented_and_validated_m1d_only,Two clients see each other and chat
 M2A,Two isolated worlds,accepted_user_stock_client_verification,Two identical arenas diverge safely with edits; user reports stock client checks passed
-M2B,"Immutable templates, COW and feature profiles",authorized_in_progress,Clone/reset/park benchmark passes with verified correctness
+M2B,"Immutable templates, COW and feature profiles",implemented_and_validated_m2b_only,Clone/reset/park benchmark passes with verified correctness
 M2C,Java SDK + sidecar,not_started,Java sample controls world and no JVM when off
 M3,Plugin ecosystem documentation and SDK breadth,not_started,Independent example plugins exercise APIs
 M4,Optional heavyweight mechanics,not_started,Each module separately tested and measured

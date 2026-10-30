@@ -1,20 +1,21 @@
 # SmolMC
 
-Rust Minecraft Java Edition **26.3 / protocol 777**. M1D is validated;
-**M2A is accepted after user-reported stock-client verification**:
-explicit isolated worlds, lifecycle ownership, scoped presence/chat, trusted
-buried block edits and world switching. See [the M2A engineering report](docs/M2A_ENGINEERING_REPORT.md).
+Rust Minecraft Java Edition **26.3 / protocol 777**, implemented through **M2B**:
+isolated worlds sharing immutable stone/registries, sparse COW snapshots, cheap
+clones/reset, profiles/budgets and event-driven idle lifecycle. See the
+[M2B engineering report](docs/M2B_ENGINEERING_REPORT.md) for acceptance and measurements.
 
-M1D's two legitimate stock clients verified movement/pose, system chat and rejoin.
-New M2A four-client encrypted/compressed headless fixtures verify instance isolation,
-edits and switching; they bypass authentication and do not render. The user reports all requested stock
-26.3 client checks passed, including two-world joins/isolation and relog. Player terrain interactions remain
-read-only; inventory actions (including F/off-hand swap), commands and most gameplay
-are unsupported and may disconnect. No signed player-chat verification is claimed.
+M2A was accepted after user-reported real stock-client verification. M2B retains
+that protocol path and adds automated cloned-world isolation checks; no new stock
+rendering or real-account capacity claim. Player block interactions remain
+read-only; trusted Rust controls can edit buried Air/Stone blocks only.
+Inventory actions (including F/off-hand swap), commands and most gameplay are
+unsupported and may disconnect. No signed-player-chat verification is claimed.
 
-**M2B alone is now authorized. M2C and later are not; stop after M2B.**
-See [AGENTS.md](AGENTS.md), [the roadmap](docs/13_ROADMAP.md) and
-[ADR-005](decisions/ADR-005-m2a-explicit-instance-ownership.md).
+**M2B is implemented and validated. M2C and all later milestones are unauthorized.**
+See [AGENTS.md](AGENTS.md), [the roadmap](docs/13_ROADMAP.md),
+[ADR-006](decisions/ADR-006-m2b-shared-cow-overlays-and-budgets.md) and the
+[accepted M2A checkpoint/report](docs/M2A_ENGINEERING_REPORT.md).
 
 ## Build and run
 
@@ -42,7 +43,7 @@ credential/token input on the server command line.
 
 ```sh
 target/release/smolmc --bind 127.0.0.1:25565 --trace-connections
-target/release/smolmc --instances 2 --bind 127.0.0.1:25565
+target/release/smolmc --instances 2 --world-profile read-only --bind 127.0.0.1:25565
 target/release/smolmc --help
 ```
 
@@ -69,8 +70,12 @@ The bootstrap dimension key is wire metadata, separate from WorldId. Sessions ow
 connection controls/subscriptions and RAII world membership; the directory scopes
 visibility/chat by world. No per-world task, timer, thread or simulation loop.
 `--instances N` (1–4096, default 1) routes joins round-robin across identical arenas.
-Trusted Rust Service controls create/edit/switch/reset/destroy worlds; occupied reset/
-destroy are rejected. No network admin endpoint or player commands are added.
+Trusted Rust Service controls create/clone/batch-edit/switch/park/reset/destroy worlds;
+occupied reset/destroy are rejected. Reset reuses identity with a new generation.
+`--world-profile editable|read-only` defaults to editable, preserving M2A's trusted
+buried edits. Required protocol/presence/chat capabilities remain on; unavailable
+physics/mob/persistence/Java capabilities fail explicitly. Parked worlds own no
+watch channel; terrain watches are created only while occupied. No network admin endpoint or player commands are added.
 Edits are ephemeral Air/Stone overrides only at `-64 <= y < 63`, at most 65,536 per
 world, preserving the intact roof/heightmaps/lighting. Surface editing is unsupported.
 
@@ -91,12 +96,16 @@ world, preserving the intact roof/heightmaps/lighting. Surface editing is unsupp
 | Presence | At most 511 peers/viewer; latest snapshots/rosters, 50ms minimum dirty publish/flush |
 | Chat | System relay only; 3-message sender burst, refill 1/s; 8192 deliveries/s aggregate; 32-message viewer queue |
 | Directory | 2048 command slots; coalesced update notices, reserved generation-checked leave |
-| Worlds | At most 4096 live worlds, 16 template descriptors; 65,536 buried overrides/world; no per-world workers |
+| Worlds | 4096 live worlds, 16 template descriptors; no per-world task/timer/thread |
+| World profile | Up to 512 players, 65,536 buried overrides, 4096 modified chunks and 1 MiB logical overlay charges/world |
+| Retained overlay snapshots | 64 MiB shared charge budget, including pinned old snapshots; charges are payload/header policy accounting, not RSS |
+| Edits | At most 4096 operations per transactional batch; unchanged chunks/root snapshots shared by clones |
 | Session service | Fixed HTTPS origin; connect 3s/request 8s; response 64 KiB; no redirects/proxy routing |
 
 Admission can be configured with `--max-connections N` (up to 4096),
 `--connection-rate N` and `--per-ip-rate N` (up to 10000). Other limits remain
-the fixed profile described in the M1D report. Excess work fails within the connection. Recoverable
+the bounded transport profile described in the M1D report; M2B world limits are
+listed above and exposed by trusted Rust profile/resource controls. Excess work fails within the connection. Recoverable
 accept errors back off without evicting existing peers.
 
 Only the acknowledged **minecraft:core:26.3** known-pack path is supported.
@@ -108,7 +117,10 @@ No Mojang registry/tag JSON/NBT assets or implementation bodies are bundled.
 
 ## Verification and reports
 
-- [M2A engineering report: 76 tests, four-client isolation/switch, instance/active-load measurements, acceptance gaps and rollback](docs/M2A_ENGINEERING_REPORT.md)
+- [M2B report: 84 tests on macOS/Linux, empty/modified/COW resource measurements, 34,000 lifecycle cycles, limits and Git rollback](docs/M2B_ENGINEERING_REPORT.md)
+- [M2B protocol evidence](docs/M2B_PROTOCOL_EVIDENCE.md) and [ADR-006](decisions/ADR-006-m2b-shared-cow-overlays-and-budgets.md)
+
+- [Accepted M2A: 76 tests, user client verification, four-client isolation/switch and historical measurements](docs/M2A_ENGINEERING_REPORT.md)
 - [M2A protocol evidence](docs/M2A_PROTOCOL_EVIDENCE.md) and [ADR-005](decisions/ADR-005-m2a-explicit-instance-ownership.md)
 
 - [M1D engineering report: client checks, 65 tests on macOS/Linux, active workloads, limits and rollback](docs/M1D_ENGINEERING_REPORT.md)

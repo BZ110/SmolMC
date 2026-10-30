@@ -1,5 +1,7 @@
 # 07 — Feature modules, profiles, dependencies and 'near-zero idle' engineering
 
+**Current implementation:** M2B implements editable/read-only profiles with the fixed required dependency closure, rejected unavailable heavy capabilities, creation-time limits and resource metrics. Parked worlds have no worker/timer/watch; this is not a general live-toggle framework. See [M2B evidence](M2B_ENGINEERING_REPORT.md). Root AGENTS.md controls authorization.
+
 ## Primary user requirement
 Enable/disable **large** optional systems, especially those with nontrivial idle CPU or RAM. 'Off' must mean **no subsystem instances, no scheduled callbacks, no caches, no subscriptions, no per-world ticking allocations** to the greatest practical extent. Core runtime, sockets, authentication, session timers, player state and protocol-required data cannot simply disappear.
 

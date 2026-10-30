@@ -3,10 +3,17 @@
 //! template model with per-instance overlays; the immutable materials and geometry
 //! below remain read-only and shared. No world simulation, Java bridge or survival.
 mod instance;
+mod overlay;
+mod profile;
 pub use instance::{
-    Dimension, InstanceError, InstanceOverlay, TemplateId, TemplateSignature, WorldError,
-    WorldHandle, WorldId, WorldInstance, WorldManager, WorldMetrics, WorldState,
+    Dimension, TemplateId, TemplateSignature, WorldError, WorldHandle, WorldId, WorldInstance,
+    WorldManager, WorldMetrics, WorldState,
 };
+pub use overlay::{
+    DEFAULT_OVERLAY_BUDGET, InstanceError, InstanceOverlay, MAX_EDIT_BATCH, OverlayBudget,
+    OverlayMemory,
+};
+pub use profile::{Feature, WorldLimits, WorldProfile};
 
 pub const MIN_Y: i32 = -64;
 pub const HEIGHT: i32 = 384;
@@ -33,7 +40,7 @@ impl VirtualStone {
     }
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord)]
 pub struct ChunkPos {
     pub x: i32,
     pub z: i32,

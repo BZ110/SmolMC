@@ -1,5 +1,7 @@
 # 11 — Performance measurement plan: prove, do not advertise
 
+**Current implementation:** This document contains historical research proposals. Actual M2B observations, workload definitions and limits are published in the current engineering report; older statements below about no measured benchmarks describe the original research phase. See [M2B evidence](M2B_ENGINEERING_REPORT.md). Root AGENTS.md controls authorization.
+
 ## Competitors and fairness
 Compare **same host/CPU, client version, view distance, active feature set, worlds/chunks, plugin load, compression and encryption**: proposed RustMC (when implemented) vs Pumpkin, Minestom, Paper and, where relevant, Folia/FerrumC. For 100 separate Paper instances compare **functionally equivalent** services. Clearly disclose different survival mechanics and features rather than declaring total superiority.
 

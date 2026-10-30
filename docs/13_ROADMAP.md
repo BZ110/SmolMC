@@ -1,6 +1,6 @@
 # 13 — Practical roadmap: defer the ambitious parts
 
-**Authorization (2026-10-29): M2A is accepted following user-reported successful real Minecraft 26.3 client verification. M2B ONLY is explicitly authorized, including implementation, performance/resource measurements, regression and feasible Linux validation, documentation and rollback. M2C and all later stages remain unauthorized.** Milestone gates are unchanged.
+**Authorization (2026-10-29): M2A is accepted following user-reported successful real Minecraft 26.3 client verification. M2B ONLY is explicitly authorized, including implementation, performance/resource measurements, regression and feasible Linux validation, documentation and rollback. M2B is now implemented and validated below. M2C and all later stages remain unauthorized.** Milestone gates are unchanged.
 
 ## R0 — Research, architecture, constraints (current deliverable)
 Artifacts: source inventory, protocol guide, decisions, feature model, Java SDK contract, benchmarks, risk register. **Gate:** agree on what defines M1 connectivity and version target.
@@ -42,8 +42,20 @@ M2A; [user evidence](../evidence/m2a-stock-client-user-verification.json) record
 the specific two-world isolation/relog observations and their provenance.
 M2B only is now authorized; stop before M2C.
 
-## M2B — Shared templates and resource profiles (authorized; implementation in progress)
+## M2B — Shared templates and resource profiles (implemented and validated)
 Concepts: immutable chunks + sparse overlays, clone/reset, parked idle state, world budgets, feature resolver and metrics. **Gate:** tracked incremental RAM/timer work and correctness under high churn; publish real measurements.
+
+
+**Evidence:** [M2B engineering report](M2B_ENGINEERING_REPORT.md),
+[protocol regression evidence](M2B_PROTOCOL_EVIDENCE.md) and
+[ADR-006](../decisions/ADR-006-m2b-shared-cow-overlays-and-budgets.md). All 84 tests,
+fmt, Clippy, release/examples and listener recovery pass on macOS and fresh Alpine
+Linux with matching source hashes. Empty/modified instances through 4096/1000,
+COW clone sharing/divergence, creation/reset latency, retained charges, RSS/CPU/
+threads and 34,000 lifecycle cycles are measured. Four protocol clients verify
+cloned-world edit isolation; the opt-in dense active/churn probe passes separately.
+No world-owned worker/timer, Java, plugin, survival or persistence system is added.
+**Stop after M2B; M2C and later require new explicit authorization.**
 
 ## M2C — Java SDK bridge (future)
 Concepts: sidecar launch/attach, API semantic version, world/player/command APIs, batched edits, event bus. **Gate:** developer writes a tiny Java minigame without Rust changes; bridge-off uses no JVM.

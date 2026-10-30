@@ -1,12 +1,12 @@
 # 02 — Proposed architecture and responsibilities
 
-**Current implementation:** M1D is stock-client validated; the accepted M2A implementation adds
-explicit instance lifecycle ownership, bounded buried edits and per-world
-replication/switching. See [ADR-005](../decisions/ADR-005-m2a-explicit-instance-ownership.md)
-and [M2A acceptance evidence](M2A_ENGINEERING_REPORT.md). The diagram remains the
-long-term proposal; no simulation workers, Java bridge or M2B feature/profile/cache
-system are implemented at this checkpoint. The user accepted M2A after real-client
-verification; M2B alone is now authorized, with M2C and later excluded.
+**Current implementation through M2B:** explicit instance lifecycle, immutable
+shared templates/terrain/registries, sparse chunk COW snapshots, clone/reset/park,
+validated profiles/budgets and retained-memory metrics. See
+[ADR-006](../decisions/ADR-006-m2b-shared-cow-overlays-and-budgets.md) and
+[the M2B report](M2B_ENGINEERING_REPORT.md). The diagram remains the long-term
+proposal: no simulation workers, Java/plugin bridge, persistence or survival.
+M2C and later remain unauthorized.
 
 ## High-level ownership tree
 

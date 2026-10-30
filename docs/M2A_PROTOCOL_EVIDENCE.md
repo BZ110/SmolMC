@@ -27,7 +27,7 @@ redistribution of Mojang bodies/assets was performed.
 |---|---|---|
 | `0x4e` entity removal, `0x46` player-info removal | Clear old entities/Tab entries | Existing layouts; new ordering is a design decision exercised by the headless decoder |
 | `0x26` chunk unload | Unsubscribe all sent source-world chunks | Exact 25 removals verified in switch fixture |
-| `0x60` center, `0x63` spawn, `0x27` start loading, `0x49` position sync | Reinitialize interest and teleport in the same dimension | Existing encoders; stock renderer/loading-screen behavior unverified |
+| `0x60` center, `0x63` spawn, `0x27` start loading, `0x49` position sync | Reinitialize interest and teleport in the same dimension | Existing encoders; stock acceptance later reported by user, without a new agent-captured visual trace |
 | `0x2e`, `0x0c`, `0x0b` chunks/batches | Shared base followed by target overrides before batch completion | 25 initial + 25 target chunks; bounded batch ACKs decoded |
 | `0x08` block update | Replay buried overrides, live changes and reversions | Exact position/state decoded, including negative coordinates |
 | Info/spawn/path/head/pose | Scope to selected directory | Four fixtures at identical coordinates; exact entity sets before/after switch |

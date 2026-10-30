@@ -11,9 +11,13 @@
 //! `docs/20_TEMPLATE_FORMAT_AND_LIFECYCLE.md`): a `TemplateId` references
 //! logically immutable content, a `WorldId` references a running instance with its
 //! own players/overlay/lifecycle, and these are never interchangeable.
-use crate::Material;
+use crate::{
+    DEFAULT_OVERLAY_BUDGET, Feature, InstanceOverlay, Material, OverlayBudget, OverlayMemory,
+    WorldProfile,
+};
 use std::{
     collections::HashMap,
+    sync::Arc,
     sync::atomic::{AtomicU64, AtomicUsize, Ordering::Relaxed},
 };
 
@@ -83,60 +87,8 @@ impl WorldTemplate {
     }
 }
 
-/// Maximum editable blocks an instance overlay may hold before degrading. A quota,
-/// not a capacity promise: overflow is rejected so one world cannot grow unbounded.
-/// Chosen for the M2A virtual-stone overlay, not a production claim.
-pub const MAX_OVERWRITE_EDITS: usize = 1 << 16;
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum InstanceError {
-    /// Overlay exceeded its bounded edit budget.
-    CapacityExceeded,
-}
-
-/// Sparse per-instance block edits over an immutable template. Reads consult the
-/// overlay first, then fall back to the template material. Never touches shared or
-/// mutable template content; each instance owns its own overlay so edits in one
-/// instance cannot contaminate another. Bounded by `MAX_OVERWRITE_EDITS`.
-#[derive(Clone, Debug, Default)]
-pub struct InstanceOverlay {
-    edits: HashMap<BlockPos, Material>,
-}
-
-impl InstanceOverlay {
-    pub fn new() -> Self {
-        Self {
-            edits: HashMap::new(),
-        }
-    }
-    /// Record a block override. Rejected on overflow so edits stay resource-bounded.
-    pub fn set_block(&mut self, pos: BlockPos, material: Material) -> Result<(), InstanceError> {
-        if self.edits.len() >= MAX_OVERWRITE_EDITS && !self.edits.contains_key(&pos) {
-            return Err(InstanceError::CapacityExceeded);
-        }
-        self.edits.insert(pos, material);
-        Ok(())
-    }
-    pub fn edits(&self) -> impl Iterator<Item = (BlockPos, Material)> + '_ {
-        self.edits.iter().map(|(pos, material)| (*pos, *material))
-    }
-    /// Remove an override so reads fall back to the template. Returns the removed value.
-    pub fn remove_block(&mut self, pos: BlockPos) -> Option<Material> {
-        self.edits.remove(&pos)
-    }
-    /// Effective material, overlay first then template `material_at_y` fallback.
-    pub fn get_block(&self, pos: BlockPos, material_at_y: impl Fn(i32) -> Material) -> Material {
-        match self.edits.get(&pos) {
-            Some(material) => *material,
-            None => material_at_y(pos[1]),
-        }
-    }
-    /// Number of outstanding edits; drives overlay-memory and promotion accounting.
-    pub fn edit_count(&self) -> usize {
-        self.edits.len()
-    }
-}
-
+#[cfg(test)]
+const MAX_OVERWRITE_EDITS: usize = 1 << 16;
 /// Per-instance lifecycle. Transitions are idempotent and cancellation-aware from
 /// the caller's perspective; players cannot enter a not-ready instance.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -165,7 +117,8 @@ pub enum WorldState {
 #[derive(Debug)]
 pub struct WorldInstance {
     pub id: WorldId,
-    pub template: TemplateId,
+    pub template: Arc<WorldTemplate>,
+    pub profile: WorldProfile,
     pub state: WorldState,
     pub overlay: InstanceOverlay,
     /// Outstanding players currently in the instance (enter/leave), used by the
@@ -229,15 +182,22 @@ pub enum WorldError {
     Occupied,
     /// Overlay exceeded its bounded edit budget (mapped from `InstanceError`).
     OverlayCapacityExceeded,
+    GlobalOverlayBudgetExceeded,
+    WorldBudgetExceeded,
+    BatchTooLarge,
+    FeatureDisabled,
+    UnsupportedFeature,
+    InvalidBudget,
 }
 
 /// Owns templates and instances together with their lifecycle state machine.
 /// Pure bookkeeping; no world tick, per-world worker or timer is scheduled here.
 #[derive(Debug)]
 pub struct WorldManager {
-    templates: HashMap<TemplateId, WorldTemplate>,
+    templates: HashMap<TemplateId, Arc<WorldTemplate>>,
     instances: HashMap<WorldId, WorldInstance>,
     metrics: WorldMetrics,
+    budget: Arc<OverlayBudget>,
 }
 
 impl Default for WorldManager {
@@ -248,7 +208,11 @@ impl Default for WorldManager {
 
 impl WorldManager {
     pub fn new() -> Self {
+        Self::with_overlay_budget(DEFAULT_OVERLAY_BUDGET)
+    }
+    pub fn with_overlay_budget(bytes: usize) -> Self {
         Self {
+            budget: OverlayBudget::new(bytes),
             templates: HashMap::new(),
             instances: HashMap::new(),
             metrics: WorldMetrics::default(),
@@ -275,7 +239,8 @@ impl WorldManager {
             return Err(WorldError::CapacityExceeded);
         }
         self.metrics.templates_created.fetch_add(1, Relaxed);
-        self.templates.insert(id, WorldTemplate { id, signature });
+        self.templates
+            .insert(id, Arc::new(WorldTemplate { id, signature }));
         Ok(())
     }
 
@@ -286,6 +251,23 @@ impl WorldManager {
         template: TemplateId,
         spawn: BlockPos,
     ) -> Result<WorldId, WorldError> {
+        self.create_profiled(template, spawn, WorldProfile::default())
+    }
+    pub fn create_profiled(
+        &mut self,
+        template: TemplateId,
+        spawn: BlockPos,
+        profile: WorldProfile,
+    ) -> Result<WorldId, WorldError> {
+        // Revalidate externally assembled limits before allocation.
+        WorldProfile::resolve(
+            if profile.enabled(Feature::WorldEdits) {
+                &[Feature::WorldEdits]
+            } else {
+                &[]
+            },
+            profile.limits,
+        )?;
         if !self.templates.contains_key(&template) {
             return Err(WorldError::UnknownTemplate);
         }
@@ -304,7 +286,8 @@ impl WorldManager {
             id,
             WorldInstance {
                 id,
-                template,
+                template: Arc::clone(&self.templates[&template]),
+                profile,
                 state: WorldState::Ready,
                 overlay: InstanceOverlay::new(),
                 players: 0,
@@ -321,7 +304,7 @@ impl WorldManager {
     }
 
     pub fn template(&self, id: TemplateId) -> Option<&WorldTemplate> {
-        self.templates.get(&id)
+        self.templates.get(&id).map(Arc::as_ref)
     }
 
     fn check(&self, id: WorldId) -> Result<&WorldInstance, WorldError> {
@@ -366,6 +349,9 @@ impl WorldManager {
         if instance.state == WorldState::Parked || instance.players == 0 {
             instance.state = WorldState::Active;
         }
+        if instance.players >= instance.profile.limits.max_players {
+            return Err(WorldError::WorldBudgetExceeded);
+        }
         instance.players += 1;
         Ok(())
     }
@@ -408,11 +394,14 @@ impl WorldManager {
             .generation
             .checked_add(1)
             .ok_or(WorldError::CapacityExceeded)?;
+        let removed = instance.overlay.edit_count();
         instance.overlay = InstanceOverlay::new();
         instance.generation = generation;
         instance.state = WorldState::Ready;
         self.metrics.instances_reset.fetch_add(1, Relaxed);
-        self.overlay_edits();
+        self.metrics
+            .overlay_edits
+            .fetch_sub(removed as u64, Relaxed);
         self.handle(handle.id)
     }
 
@@ -425,32 +414,79 @@ impl WorldManager {
         pos: BlockPos,
         material: Material,
     ) -> Result<(), WorldError> {
-        self.validate(handle)?;
-        // M2A only: buried edits keep the shared heightmaps/top lighting valid.
-        if pos[0].unsigned_abs() > crate::HORIZONTAL_BOUND as u32
-            || pos[2].unsigned_abs() > crate::HORIZONTAL_BOUND as u32
-            || !(crate::MIN_Y..crate::SURFACE - 1).contains(&pos[1])
-        {
-            return Err(WorldError::InvalidPosition);
+        self.set_blocks(handle, &[(pos, material)])
+    }
+    pub fn set_blocks(
+        &mut self,
+        handle: WorldHandle,
+        edits: &[(BlockPos, Material)],
+    ) -> Result<(), WorldError> {
+        let instance = self.validate(handle)?;
+        if !instance.profile.enabled(Feature::WorldEdits) {
+            return Err(WorldError::FeatureDisabled);
         }
-        let template = self.check(handle.id)?.template;
-        let base = self.templates[&template].material_at_y(pos[1]);
-        if material == base {
-            self.instances
-                .get_mut(&handle.id)
-                .unwrap()
-                .overlay
-                .remove_block(pos);
+        if edits.len() > crate::MAX_EDIT_BATCH {
+            return Err(WorldError::BatchTooLarge);
+        }
+        let mut changes = Vec::with_capacity(edits.len());
+        for &(pos, material) in edits {
+            if pos[0].unsigned_abs() > crate::HORIZONTAL_BOUND as u32
+                || pos[2].unsigned_abs() > crate::HORIZONTAL_BOUND as u32
+                || !(crate::MIN_Y..crate::SURFACE - 1).contains(&pos[1])
+            {
+                return Err(WorldError::InvalidPosition);
+            }
+            let base = instance.template.material_at_y(pos[1]);
+            changes.push((
+                pos,
+                if base == material {
+                    None
+                } else {
+                    Some(material)
+                },
+            ));
+        }
+        let before = instance.overlay.edit_count();
+        let overlay = instance
+            .overlay
+            .apply(&changes, instance.profile.limits, &self.budget)?;
+        let after = overlay.edit_count();
+        self.instances.get_mut(&handle.id).unwrap().overlay = overlay;
+        if after >= before {
+            self.metrics
+                .overlay_edits
+                .fetch_add((after - before) as u64, Relaxed);
         } else {
-            self.instances
-                .get_mut(&handle.id)
-                .unwrap()
-                .overlay
-                .set_block(pos, material)
-                .map_err(|_| WorldError::OverlayCapacityExceeded)?;
+            self.metrics
+                .overlay_edits
+                .fetch_sub((before - after) as u64, Relaxed);
         }
-        self.overlay_edits();
         Ok(())
+    }
+    pub fn clone_instance(&mut self, source: WorldHandle) -> Result<WorldHandle, WorldError> {
+        let src = self.validate(source)?;
+        let (template, spawn, profile, overlay) = (
+            src.template.id,
+            src.template.signature.dimension.spawn,
+            src.profile,
+            src.overlay.clone(),
+        );
+        let id = self.create_profiled(template, spawn, profile)?;
+        self.metrics
+            .overlay_edits
+            .fetch_add(overlay.edit_count() as u64, Relaxed);
+        self.instances.get_mut(&id).unwrap().overlay = overlay;
+        self.handle(id)
+    }
+    pub fn park(&mut self, handle: WorldHandle) -> Result<(), WorldError> {
+        if self.validate(handle)?.players != 0 {
+            return Err(WorldError::Occupied);
+        }
+        self.instances.get_mut(&handle.id).unwrap().state = WorldState::Parked;
+        Ok(())
+    }
+    pub fn overlay_memory(&self) -> OverlayMemory {
+        self.budget.snapshot()
     }
 
     /// Destroy an instance. Rejected if occupied (destroy policy: relocate,
@@ -465,11 +501,13 @@ impl WorldManager {
         if occupied {
             return Err(WorldError::Occupied);
         }
-        self.instances.remove(&id);
+        let removed = self.instances.remove(&id).unwrap();
+        self.metrics
+            .overlay_edits
+            .fetch_sub(removed.overlay.edit_count() as u64, Relaxed);
         self.metrics.instances_destroyed.fetch_add(1, Relaxed);
         let active = self.instances.len();
         self.metrics.active_instances.store(active, Relaxed);
-        self.overlay_edits();
         if self.instances.is_empty() {
             self.instances = HashMap::new();
         }
@@ -491,13 +529,7 @@ impl WorldManager {
 
     /// Total overlay edits across all instances; drives shared-memory accounting.
     pub fn overlay_edits(&self) -> u64 {
-        let total: u64 = self
-            .instances
-            .values()
-            .map(|i| i.overlay.edit_count() as u64)
-            .sum();
-        self.metrics.overlay_edits.store(total, Relaxed);
-        total
+        self.metrics.overlay_edits.load(Relaxed)
     }
 
     pub fn metrics(&self) -> &WorldMetrics {
@@ -508,6 +540,7 @@ impl WorldManager {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::InstanceError;
 
     fn overworld() -> Dimension {
         Dimension {
@@ -611,12 +644,31 @@ mod tests {
             Material::Air
         );
         let mut huge = InstanceOverlay::new();
-        for z in 0..(MAX_OVERWRITE_EDITS as i32) {
-            huge.set_block([0, 0, z], Material::Stone).unwrap();
+        let budget = OverlayBudget::new(DEFAULT_OVERLAY_BUDGET);
+        for base in (0..MAX_OVERWRITE_EDITS).step_by(crate::MAX_EDIT_BATCH) {
+            let edits: Vec<_> = (base..base + crate::MAX_EDIT_BATCH)
+                .map(|n| {
+                    let z = n as i32;
+                    (
+                        [
+                            z % 16,
+                            crate::MIN_Y + (z / 256) % 127,
+                            (z / 16) % 16 + (z / (127 * 256)) * 16,
+                        ],
+                        Some(Material::Stone),
+                    )
+                })
+                .collect();
+            huge = huge
+                .apply(&edits, crate::WorldLimits::default(), &budget)
+                .unwrap();
         }
-        assert_eq!(huge.set_block([0, 0, 0], Material::Stone), Ok(()));
         assert_eq!(
-            huge.set_block([1, 0, 0], Material::Air),
+            huge.set_block([0, crate::MIN_Y, 0], Material::Stone),
+            Ok(())
+        );
+        assert_eq!(
+            huge.set_block([100, 0, 0], Material::Air),
             Err(InstanceError::CapacityExceeded)
         );
         assert_eq!(m.overlay_edits(), 1);
@@ -672,5 +724,76 @@ mod tests {
         }
         assert_eq!(m.active_instances(), 0);
         assert_eq!(m.metrics().snapshot().instances_destroyed, 100);
+    }
+    #[test]
+    fn clone_isolation_reset_reuse_and_budget_failures_are_atomic() {
+        let mut m = WorldManager::new();
+        m.declare_template(TemplateId(1), stone_signature())
+            .unwrap();
+        let a = m.create_instance(TemplateId(1), [8, 65, 8]).unwrap();
+        let a = m.handle(a).unwrap();
+        m.set_block(a, [0, 0, 0], Material::Air).unwrap();
+        let used = m.overlay_memory().charged_bytes;
+        let b = m.clone_instance(a).unwrap();
+        assert!(Arc::ptr_eq(
+            &m.validate(a).unwrap().template,
+            &m.validate(b).unwrap().template
+        ));
+        assert!(
+            m.validate(a)
+                .unwrap()
+                .overlay
+                .same_snapshot(&m.validate(b).unwrap().overlay)
+        );
+        assert_eq!(m.overlay_memory().charged_bytes, used);
+        m.set_block(b, [0, 0, 0], Material::Stone).unwrap();
+        assert_eq!(
+            m.validate(a).unwrap().overlay.override_at([0, 0, 0]),
+            Some(Material::Air)
+        );
+        assert_eq!(m.validate(b).unwrap().overlay.edit_count(), 0);
+        let b2 = m.reset(b).unwrap();
+        assert!(matches!(m.validate(b), Err(WorldError::StaleHandle)));
+        m.park(b2).unwrap();
+        assert_eq!(m.validate(b2).unwrap().state, WorldState::Parked);
+        m.destroy(a).unwrap();
+        m.destroy(b2).unwrap();
+        assert_eq!(m.overlay_memory().charged_bytes, 0);
+        let profile = WorldProfile::resolve(
+            &[Feature::WorldEdits],
+            crate::WorldLimits {
+                max_edits: 1,
+                max_players: 1,
+                ..crate::WorldLimits::default()
+            },
+        )
+        .unwrap();
+        let c = m
+            .create_profiled(TemplateId(1), [8, 65, 8], profile)
+            .unwrap();
+        let c = m.handle(c).unwrap();
+        assert_eq!(
+            m.set_blocks(c, &[([0, 0, 0], Material::Air), ([1, 0, 0], Material::Air)]),
+            Err(WorldError::OverlayCapacityExceeded)
+        );
+        assert_eq!(m.validate(c).unwrap().overlay.edit_count(), 0);
+        m.enter(c.id).unwrap();
+        assert_eq!(m.enter(c.id), Err(WorldError::WorldBudgetExceeded));
+        m.leave(c.id).unwrap();
+        let ro = m
+            .create_profiled(TemplateId(1), [8, 65, 8], WorldProfile::read_only())
+            .unwrap();
+        assert_eq!(
+            m.set_block(m.handle(ro).unwrap(), [0, 0, 0], Material::Air),
+            Err(WorldError::FeatureDisabled)
+        );
+        assert_eq!(
+            m.set_blocks(
+                c,
+                &[([0, 0, 0], Material::Air), ([0, 63, 0], Material::Air)]
+            ),
+            Err(WorldError::InvalidPosition)
+        );
+        assert_eq!(m.overlay_edits(), 0);
     }
 }

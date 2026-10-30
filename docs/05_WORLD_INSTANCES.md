@@ -1,5 +1,7 @@
 # 05 — World templates, instances, overlays, and isolation: main differentiator
 
+**Current implementation:** M2B implements shared immutable virtual-stone descriptors, sparse chunk COW snapshots, clone/reset/reuse/park, scoped ownership and bounded profiles. Arbitrary imported/template files and general lighting remain future design. See [M2B evidence](M2B_ENGINEERING_REPORT.md). Root AGENTS.md controls authorization.
+
 ## Three distinct nouns
 **Template**: content-addressed, logically immutable world content (chunks, metadata, reference palette). Loaded once or lazily into a shared cache. **Instance**: independently named live world with its own players, entity set, rules, subscriptions, time/config and overlay; can be unloaded without affecting any template or other instance. **Storage**: optional durability policy/backing store, not automatically implied by having an instance.
 
