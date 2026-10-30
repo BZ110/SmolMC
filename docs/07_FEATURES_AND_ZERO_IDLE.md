@@ -1,5 +1,12 @@
 # 07 — Feature modules, profiles, dependencies and 'near-zero idle' engineering
 
+**M4A implementation update (2026-10-30):** bounded imported templates, sparse
+block/light COW, local collision and held mining now extend the historical scope
+below. See [M4A contract](M4A_TERRAIN_CONTRACT.md), [M4A report](M4A_ENGINEERING_REPORT.md)
+and [ADR-010](../decisions/ADR-010-m4a-imported-arena-terrain.md). One lazy shared
+lighting worker; no world/player ticking task and no required Java hot path.
+Root AGENTS.md and the roadmap govern current authorization.
+
 **Current implementation:** M2B implements editable/read-only profiles with the fixed required dependency closure, rejected unavailable heavy capabilities, creation-time limits and resource metrics. Parked worlds have no worker/timer/watch; this is not a general live-toggle framework. See [M2B evidence](M2B_ENGINEERING_REPORT.md). Root AGENTS.md controls authorization. Revised M3 `--pvp on` adds state/critical
 queues only for occupied PvP sessions, with no timer/task per player or world.
 Cooldowns/iframes and the supported flat-roof motion subset advance lazily on

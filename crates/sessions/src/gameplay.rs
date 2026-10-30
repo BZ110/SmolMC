@@ -124,7 +124,45 @@ impl Clone for Notices {
         }
     }
 }
+#[derive(Clone)]
+pub(crate) struct BlockOwner {
+    pub terrain: tokio::sync::watch::Receiver<smolmc_world::InstanceOverlay>,
+    pub worlds: Arc<crate::worlds::Worlds>,
+    pub handle: smolmc_world::WorldHandle,
+}
+#[derive(Clone, Copy, Debug)]
+pub(crate) struct Mining {
+    pub pos: [i32; 3],
+    pub material: smolmc_world::Material,
+    pub item: Item,
+    pub start: u64,
+    pub last_stage: i32,
+}
+pub fn mining_progress(material: smolmc_world::Material, item: Item, grounded: bool) -> f32 {
+    let info = material.info();
+    if info.hardness < 0. {
+        return 0.;
+    }
+    let mut speed = if item == Item::IronPickaxe && info.pickaxe {
+        6.
+    } else if item.sword() {
+        info.sword_speed
+    } else {
+        1.
+    };
+    if !grounded {
+        speed /= 5.;
+    }
+    let correct = !info.requires_tool || (item == Item::IronPickaxe && info.iron_correct);
+    speed / info.hardness / if correct { 30. } else { 100. }
+}
 pub struct State {
+    pub(crate) mining: Option<Mining>,
+    pub(crate) blocks: Option<BlockOwner>,
+    pub(crate) block_sequence: i32,
+    pub(crate) combat_enabled: bool,
+    pub(crate) mode: i32,
+    pub terrain: Option<smolmc_world::collision::TerrainSnapshot>,
     pub(crate) notices: Option<Notices>,
     pub(crate) trace: bool,
     pub inventory: Inventory,
@@ -145,6 +183,8 @@ pub struct State {
     moved_this_tick: bool,
     action_credit: f64,
     action_at: Instant,
+    block_credit: f64,
+    block_at: Instant,
     known_position: [f64; 3],
 }
 impl State {
@@ -160,6 +200,12 @@ impl State {
 
     pub fn new(now: Instant, spawn: [f64; 3]) -> Self {
         Self {
+            blocks: None,
+            mining: None,
+            block_sequence: -1,
+            combat_enabled: true,
+            mode: 2,
+            terrain: None,
             notices: None,
             trace: false,
             inventory: Inventory::default(),
@@ -180,7 +226,50 @@ impl State {
             moved_this_tick: false,
             action_credit: 8.,
             action_at: now,
+            block_credit: 16.,
+            block_at: now,
             known_position: spawn,
+        }
+    }
+    pub(crate) fn refresh_terrain(&mut self) {
+        if let (Some(owner), Some(terrain)) = (&self.blocks, &mut self.terrain) {
+            terrain.overlay = owner.terrain.borrow().clone();
+        }
+    }
+    pub(crate) fn occupies(&self, pos: [i32; 3]) -> bool {
+        smolmc_world::collision::Aabb::player(self.known_position, false).intersects(
+            smolmc_world::collision::Aabb {
+                min: pos.map(|v| v as f64),
+                max: pos.map(|v| v as f64 + 1.),
+            },
+        )
+    }
+    pub fn build_kit(&mut self) {
+        self.inventory.slots[37] = Item::IronPickaxe;
+        for (slot, name) in [
+            (38, "minecraft:stone"),
+            (39, "minecraft:oak_planks"),
+            (40, "minecraft:cobblestone"),
+            (41, "minecraft:white_wool"),
+        ] {
+            if let Some(m) = smolmc_world::Material::parse(name, None) {
+                self.inventory.slots[slot] = Item::Block {
+                    state: m.state(),
+                    item: m.info().item,
+                };
+            }
+        }
+    }
+    pub(crate) fn admit_build_action(&mut self, now: Instant) -> bool {
+        self.block_credit = (self.block_credit
+            + now.saturating_duration_since(self.block_at).as_secs_f64() * 64.)
+            .min(16.);
+        self.block_at = now;
+        if self.block_credit < 1. {
+            false
+        } else {
+            self.block_credit -= 1.;
+            true
         }
     }
     pub fn admit_action(&mut self, now: Instant) -> bool {
@@ -204,11 +293,7 @@ impl State {
     }
 
     pub fn attack_strength(&self, now: Instant) -> f32 {
-        let speed = if self.inventory.main() == Item::Empty {
-            4.
-        } else {
-            4.0 + (-2.4_f32 as f64)
-        };
+        let speed = 4.0 + self.inventory.main().speed_modifier().map_or(0., f64::from);
         let delay = (20.0 / speed) as f32;
         let ticks = self.tick(now);
         let elapsed = if self.last_attack == 0 {
@@ -223,9 +308,10 @@ impl State {
         let scale = self.attack_strength(now);
         self.last_attack = ticks + 1;
         let base = match self.inventory.main() {
-            Item::Empty => 1.,
             Item::IronSword => 6.,
             Item::DiamondSword => 7.,
+            Item::IronPickaxe => 4.,
+            _ => 1.,
         };
         base * (0.2 + scale * scale * 0.8)
     }
@@ -254,10 +340,21 @@ impl State {
     }
     pub fn reset(&mut self, now: Instant, spawn: [f64; 3]) {
         let notices = self.notices.clone();
+        let terrain = self.terrain.clone();
+        let blocks = self.blocks.clone();
+        let combat_enabled = self.combat_enabled;
+        let mode = self.mode;
         let trace = self.trace;
         let epoch = self.origin;
         *self = Self::new(now, spawn);
         self.notices = notices;
+        self.terrain = terrain;
+        self.blocks = blocks;
+        self.combat_enabled = combat_enabled;
+        self.mode = mode;
+        if self.blocks.is_some() {
+            self.build_kit();
+        }
         self.trace = trace;
         self.origin = epoch;
         self.motion_tick = self.tick(now);
@@ -267,7 +364,7 @@ impl State {
             && self.fall_distance > 0.
             && !pose.on_ground
             && !pose.sprinting
-            && pose.position[1] > 64.01
+            && (self.terrain.is_some() || pose.position[1] > 64.01)
     }
     pub fn finish_tick(&mut self) {
         if !self.moved_this_tick {
@@ -288,7 +385,7 @@ impl State {
         let limit = 0.1f32 as f64 * 2.5;
         if pose.on_ground
             && self.known_movement[0].powi(2) + self.known_movement[2].powi(2) < limit * limit
-            && self.inventory.main() != Item::Empty
+            && self.inventory.main().sword()
         {
             return AttackKind::Sweep;
         }
@@ -300,7 +397,10 @@ impl State {
         self.known_movement = std::array::from_fn(|i| position[i] - self.known_position[i]);
         self.known_position = position;
         self.moved_this_tick = true;
-        if position[1] <= 64.01 {
+        let supported = self.terrain.as_ref().map_or(position[1] <= 64.01, |t| {
+            t.grounded(position, pose.crouching)
+        });
+        if supported {
             self.fall_distance = 0.;
         } else if position[1] < self.previous_y {
             self.fall_distance += self.previous_y - position[1];
@@ -320,7 +420,7 @@ impl State {
             }
         }
         self.motion_y = position[1];
-        self.motion_ground = position[1] <= 64.01;
+        self.motion_ground = supported;
         // Classic arena policy: settle contact before a same-phase hit. An
         // airborne falling vector must not survive a confirmed roof landing.
         // This is the ordinary post-contact vanilla gravity/drag value; the
@@ -334,9 +434,13 @@ impl State {
         (self.velocity, self.motion_y, self.motion_ground)
     }
     pub fn reposition(&mut self, now: Instant, spawn: [f64; 3]) {
+        self.mining = None;
         self.velocity = [0.; 3];
         self.motion_y = spawn[1];
-        self.motion_ground = spawn[1] <= 64.01;
+        self.motion_ground = self
+            .terrain
+            .as_ref()
+            .map_or(spawn[1] <= 64.01, |t| t.grounded(spawn, false));
         self.motion_tick = self.tick(now);
         self.previous_y = spawn[1];
         self.known_position = spawn;
@@ -364,6 +468,27 @@ impl State {
             } else {
                 0.91_f32 as f64
             };
+            if let Some(terrain) = &self.terrain {
+                if let Some(resolved) = smolmc_world::collision::resolve(
+                    self.known_position,
+                    self.velocity,
+                    false,
+                    false,
+                    |p| terrain.block(p),
+                ) {
+                    for axis in 0..3 {
+                        if (resolved.delta[axis] - self.velocity[axis]).abs() > 1e-7 {
+                            self.velocity[axis] = 0.;
+                        }
+                    }
+                    // Classify from confirmed contact, not predicted next-step collision.
+                    self.motion_ground = terrain.grounded(self.known_position, false);
+                }
+                self.velocity[0] *= friction;
+                self.velocity[2] *= friction;
+                self.velocity[1] = (self.velocity[1] - 0.08) * 0.98_f32 as f64;
+                continue;
+            }
             let accepted_y = self.motion_y;
             let next_y = accepted_y + self.velocity[1];
             if next_y < 64. {
@@ -488,6 +613,11 @@ impl AttackKind {
 }
 #[derive(Debug)]
 pub enum Delivery {
+    TerrainCommitted {
+        at: Instant,
+        world: smolmc_world::WorldHandle,
+        packets: Arc<[Vec<u8>]>,
+    },
     Packets {
         entity: Option<i32>,
         packets: Arc<[Vec<u8>]>,

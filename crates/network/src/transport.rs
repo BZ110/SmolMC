@@ -146,6 +146,7 @@ pub struct Inbound<R> {
     cipher: Option<StreamCipher>,
     compression: Option<usize>,
     limit: usize,
+    ratio_limit: usize,
     budget: ByteBudget,
     work_window: Instant,
     work_bytes: usize,
@@ -167,6 +168,7 @@ impl<R: AsyncRead + Unpin> Inbound<R> {
             cipher: None,
             compression: None,
             limit: LOGIN_LIMIT,
+            ratio_limit: MAX_RATIO,
             budget,
             work_window: Instant::now(),
             work_bytes: 0,
@@ -178,6 +180,17 @@ impl<R: AsyncRead + Unpin> Inbound<R> {
             return Err(invalid("invalid frame limit transition"));
         }
         self.limit = limit;
+        Ok(())
+    }
+    /// Client-side receiver for bounded server chunk packets. Server sessions never
+    /// select this policy: their set_limit remains capped at CONTROL_LIMIT and 128x.
+    /// Exact-stream, byte reservations and work budgets remain enforced.
+    pub fn receive_server_packets(&mut self) -> io::Result<()> {
+        if self.body.is_some() || self.prefix_used != 0 {
+            return Err(invalid("invalid client receive transition"));
+        }
+        self.limit = OUTPUT_LIMIT;
+        self.ratio_limit = 1024;
         Ok(())
     }
     /// Receiver policy for trusted library users (e.g. client-side test probes
@@ -308,7 +321,7 @@ impl<R: AsyncRead + Unpin> Inbound<R> {
         let compressed = &packet[used..];
         if decoded < threshold
             || decoded > self.limit
-            || decoded > compressed.len().saturating_mul(MAX_RATIO)
+            || decoded > compressed.len().saturating_mul(self.ratio_limit)
         {
             return Err(invalid("compressed packet exceeds budget"));
         }

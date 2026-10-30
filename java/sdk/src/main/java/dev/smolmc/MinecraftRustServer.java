@@ -14,19 +14,20 @@ import java.util.concurrent.atomic.*;
 import java.util.function.*;
 
 /**
- * Optional local SmolMC SDK 0.2.0 (schema 1.1), Java 17+. Every operation is async. close()
+ * Optional local SmolMC SDK 0.3.0 (schema 1.2), Java 17+. Every operation is async. close()
  * disconnects this control peer; launched process ownership is separate. Dependent actions may run
  * on bounded completion workers or the attaching caller (standard CompletableFuture behavior).
  * Never block waiting for another SDK future inside such an action; compose with thenCompose
  * instead.
  */
 public final class MinecraftRustServer implements AutoCloseable {
-  public static final String API_VERSION = "0.2.0";
+  public static final String API_VERSION = "0.3.0";
   static final int MAX_FRAME = 131072, MAX_PENDING = 64;
 
   public enum Profile {
     READ_ONLY,
-    EDITABLE
+    EDITABLE,
+    BUILD
   }
 
   public enum Material {
@@ -91,6 +92,8 @@ public final class MinecraftRustServer implements AutoCloseable {
   public record Player(PlayerHandle handle, String name, WorldHandle world) {}
 
   public record BlockPos(int x, int y, int z) {}
+  public record BlockState(int protocolId,String name,String properties,boolean fullCube) {}
+  public record StateEdit(BlockPos position,int protocolState) {public StateEdit {Objects.requireNonNull(position);if(protocolState<0||protocolState>65535)throw new IllegalArgumentException("invalid state");}}
 
   public record BlockEdit(BlockPos position, Material material) {
     public BlockEdit {
@@ -244,7 +247,7 @@ public final class MinecraftRustServer implements AutoCloseable {
                 d.writeLong(1);
                 d.writeByte(0);
                 d.writeShort(1);
-                d.writeShort(1);
+                d.writeShort(2);
                 d.write(token);
               });
       try {
@@ -259,7 +262,7 @@ public final class MinecraftRustServer implements AutoCloseable {
       int status = r.u16();
       if (status != 0) throw error(status, r.string(1024));
       UUID id = r.uuid();
-      if (r.u16() != 1 || r.u16() != 1 || !r.string(32).equals(API_VERSION))
+      if (r.u16() != 1 || r.u16() != 2 || !r.string(32).equals(API_VERSION))
         throw new IOException("unsupported SDK/schema version");
       boolean control = r.u8() == 1;
       r.end();
@@ -381,13 +384,13 @@ public final class MinecraftRustServer implements AutoCloseable {
   }
 
   public final class Templates {
-    /** Binds the sole built-in immutable descriptor. File/import formats are deferred. */
+    public CompletableFuture<Template> configured() {return request(20,d->{},r->new Template(serverId,r.i64(),r.string(64)));}
+    /** Resolves the operator-configured immutable descriptor; never reads arbitrary files. */
     public CompletableFuture<Template> load(String name) {
-      if (!"stone_flat".equals(name))
-        return CompletableFuture.failedFuture(
-            new BridgeException(Code.UNSUPPORTED_FEATURE, "only built-in stone_flat is available"));
-      return CompletableFuture.completedFuture(new Template(serverId, 1, name));
+      Objects.requireNonNull(name);
+      return configured().thenCompose(t->t.name().equals(name)?CompletableFuture.completedFuture(t):CompletableFuture.failedFuture(new BridgeException(Code.UNSUPPORTED_FEATURE,"template is not configured")));
     }
+
   }
 
   public final class Worlds {
@@ -406,6 +409,11 @@ public final class MinecraftRustServer implements AutoCloseable {
           },
           MinecraftRustServer.this::world);
     }
+
+    public CompletableFuture<BlockState> state(int protocolId) {return request(21,d->d.writeInt(protocolId),r->new BlockState(r.i32(),r.string(256),r.string(1024),r.u8()!=0));}
+    public CompletableFuture<List<Integer>> readStates(WorldHandle w,List<BlockPos> positions) {bound(positions.size());var copy=List.copyOf(positions);return request(22,d->{putWorld(d,w);d.writeShort(copy.size());for(var p:copy)putPos(d,p);},r->{int n=r.count(4096);var result=new ArrayList<Integer>(n);for(int i=0;i<n;i++)result.add(r.i32());return List.copyOf(result);});}
+    /** Bounded atomic terrain+lighting edit; may report backpressure; imported templates only. */
+    public CompletableFuture<Void> editStates(WorldHandle w,List<StateEdit> edits) {bound(edits.size());var copy=List.copyOf(edits);return empty(23,d->{putWorld(d,w);d.writeShort(copy.size());for(var e:copy){putPos(d,e.position());d.writeInt(e.protocolState());}});}
 
     public CompletableFuture<WorldHandle> cloneWorld(WorldHandle w) {
       return request(3, d -> putWorld(d, w), MinecraftRustServer.this::world);

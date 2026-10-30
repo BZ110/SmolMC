@@ -27,7 +27,7 @@ use zeroize::Zeroizing;
 const IO_TIMEOUT: Duration = Duration::from_secs(2);
 const PEERS: usize = 4;
 static NEXT_PEER: AtomicU64 = AtomicU64::new(1);
-pub const API_VERSION: &str = "0.2.0";
+pub const API_VERSION: &str = "0.3.0";
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Access {
     Observe,
@@ -231,6 +231,7 @@ fn status(error: ControlError) -> u16 {
         ControlError::Disabled => 8,
         ControlError::World(e) => match e {
             WorldError::StaleHandle => 4,
+            WorldError::Busy => 9,
             WorldError::UnknownInstance
             | WorldError::UnknownPlayer
             | WorldError::UnknownTemplate => 5,
@@ -274,10 +275,10 @@ async fn peer(socket: UnixStream, state: Arc<State>, owner: u64) -> io::Result<(
         write(&mut output, &failure(id, 0, 3, "authentication failed")).await?;
         return Err(invalid());
     }
-    if major != 1 || minor > 1 {
+    if major != 1 || minor > 2 {
         write(
             &mut output,
-            &failure(id, 0, 2, "requires bridge schema 1.0 or 1.1"),
+            &failure(id, 0, 2, "requires bridge schema 1.0, 1.1 or 1.2"),
         )
         .await?;
         return Err(invalid());
@@ -287,7 +288,14 @@ async fn peer(socket: UnixStream, state: Arc<State>, owner: u64) -> io::Result<(
     p.extend(state.service.server_id());
     u16(&mut p, 1);
     u16(&mut p, minor);
-    string(&mut p, if minor == 0 { "0.1.0" } else { API_VERSION });
+    string(
+        &mut p,
+        match minor {
+            0 => "0.1.0",
+            1 => "0.2.0",
+            _ => API_VERSION,
+        },
+    );
     p.push(u8::from(state.access == Access::Control));
     write(&mut output, &response(id, 0, 0, &p)).await?;
     let _registration = Registration {
@@ -348,6 +356,17 @@ async fn peer(socket: UnixStream, state: Arc<State>, owner: u64) -> io::Result<(
             .await?;
             continue;
         }
+        if minor < 2
+            && (op >= 20
+                || matches!(&request,Request::Create(p) if p.enabled(smolmc_world::Feature::BlockInteractions)))
+        {
+            write(
+                &mut output,
+                &failure(id, op, 8, "requires bridge schema 1.2"),
+            )
+            .await?;
+            continue;
+        }
         if state.access != Access::Control && request.mutates() {
             write(&mut output, &failure(id, op, 3, "control grant required")).await?;
             continue;
@@ -367,6 +386,12 @@ async fn peer(socket: UnixStream, state: Arc<State>, owner: u64) -> io::Result<(
                 events = Some(state.service.control_events().map_err(|_| invalid())?);
                 Ok(Vec::new())
             }
+            Request::TerrainEdit(world, edits) => state
+                .service
+                .edit_terrain(world, edits)
+                .await
+                .map(|_| Vec::new())
+                .map_err(ControlError::from),
             Request::Unsubscribe => {
                 mask = 0;
                 events = None;
@@ -420,6 +445,10 @@ enum Request {
     Invoke(String),
     Worlds,
     Combat(i32, [u8; 16]),
+    TerrainRead(WorldHandle, Vec<[i32; 3]>),
+    TerrainEdit(WorldHandle, Vec<([i32; 3], Material)>),
+    Template,
+    State(i32),
 }
 impl Request {
     fn parse(op: u8, r: &mut Reader<'_>) -> io::Result<Self> {
@@ -432,6 +461,7 @@ impl Request {
                 Self::Create(match r.u8()? {
                     0 => WorldProfile::read_only(),
                     1 => WorldProfile::editable(),
+                    2 => WorldProfile::builder(),
                     _ => return Err(invalid()),
                 })
             }
@@ -482,6 +512,23 @@ impl Request {
             17 => Self::Invoke(r.string(256)?.to_owned()),
             18 => Self::Worlds,
             19 => Self::Combat(r.i32()?, r.take(16)?.try_into().unwrap()),
+            20 => Self::Template,
+            21 => Self::State(r.i32()?),
+            22 => Self::TerrainRead(r.world()?, r.positions()?),
+            23 => {
+                let world = r.world()?;
+                let n = r.u16()? as usize;
+                if n > 4096 {
+                    return Err(invalid());
+                }
+                let mut edits = Vec::with_capacity(n);
+                for _ in 0..n {
+                    let p = [r.i32()?, r.i32()?, r.i32()?];
+                    let m = Material::from_state(r.i32()?).ok_or_else(invalid)?;
+                    edits.push((p, m));
+                }
+                Self::TerrainEdit(world, edits)
+            }
             _ => return Err(invalid()),
         };
         r.end()?;
@@ -498,10 +545,13 @@ impl Request {
                 | Self::Unsubscribe
                 | Self::Worlds
                 | Self::Combat(..)
+                | Self::Template
+                | Self::State(..)
+                | Self::TerrainRead(..)
         )
     }
     fn edits(&self) -> usize {
-        if let Self::Edit(_, e) = self {
+        if let Self::Edit(_, e) | Self::TerrainEdit(_, e) = self {
             e.len()
         } else {
             0
@@ -510,6 +560,32 @@ impl Request {
     fn execute(self, s: &Service, owner: u64) -> Result<Vec<u8>, ControlError> {
         let mut out = Vec::new();
         match self {
+            Self::Template => {
+                u64(&mut out, 1);
+                string(
+                    &mut out,
+                    if s.imported_terrain().is_some() {
+                        "imported"
+                    } else {
+                        "stone_flat"
+                    },
+                );
+            }
+            Self::State(id) => {
+                let m = Material::from_state(id).ok_or(ControlError::InvalidRequest)?;
+                out.extend(id.to_be_bytes());
+                string(&mut out, m.info().name);
+                string(&mut out, m.info().properties);
+                out.push(u8::from(m.solid()));
+            }
+            Self::TerrainRead(w, p) => {
+                let materials = s.read_blocks(w, &p)?;
+                u16(&mut out, materials.len() as u16);
+                for m in materials {
+                    out.extend(m.state().to_be_bytes());
+                }
+            }
+            Self::TerrainEdit(..) => return Err(ControlError::InvalidRequest),
             Self::Combat(entity, uuid) => combat(&mut out, s.combat_snapshot(entity, uuid)?),
             Self::Default => world(&mut out, s.default_world()?),
             Self::Create(p) => world(&mut out, s.create_world_with_profile(p)?),
@@ -538,7 +614,15 @@ impl Request {
             Self::Read(w, p) => {
                 let m = s.read_blocks(w, &p)?;
                 u16(&mut out, m.len() as u16);
-                out.extend(m.into_iter().map(|m| u8::from(m == Material::Stone)));
+                for material in m {
+                    out.push(if material == Material::Air {
+                        0
+                    } else if material == Material::Stone {
+                        1
+                    } else {
+                        return Err(ControlError::Disabled);
+                    });
+                }
             }
             Self::Players => {
                 let players = s.list_players();

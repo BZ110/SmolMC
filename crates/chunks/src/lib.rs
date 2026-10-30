@@ -1,5 +1,7 @@
 //! One immutable coordinate-independent chunk suffix for the M1C virtual stone
 //! template. No dense blocks, per-coordinate resident chunks, cache or mutation.
+mod imported;
+pub use imported::{ImportedChunks, encode_suffix, light_update};
 use smolmc_protocol_777::login::Encoder;
 use smolmc_world::{ChunkPos, HEIGHT, MIN_Y, SURFACE};
 

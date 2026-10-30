@@ -1,6 +1,6 @@
 # 13 — Practical roadmap: defer the ambitious parts
 
-**Revised authorization (2026-10-29): M1A–M2C and replication optimization are complete (`m2c-validated`, `08fef9a`). The user explicitly replaces the original M3 with M3 — PvP Gameplay Foundation. Checkpoint `m3-pvp-before` preserves M2C. Implement this one vertical slice and stop.**
+**Historical revised M3 authorization (2026-10-29): M1A–M2C and replication optimization are complete (`m2c-validated`, `08fef9a`). The user explicitly replaces the original M3 with M3 — PvP Gameplay Foundation. Checkpoint `m3-pvp-before` preserves M2C. Implement this one vertical slice and stop.**
 
 ## R0 — Research, architecture, constraints (current deliverable)
 Artifacts: source inventory, protocol guide, decisions, feature model, Java SDK contract, benchmarks, risk register. **Gate:** agree on what defines M1 connectivity and version target.
@@ -98,17 +98,44 @@ The old M3 (polished commands/permissions, plugin JAR lifecycle, config/scheduli
 debugger/telemetry and three independently written plugins) is deferred by explicit
 user instruction until basic gameplay works. M2C literal commands/SDK remain.
 
-## Deferred M4 — optional heavy subsystems
+## M4A — Real Worlds, Block Interactions & Terrain Physics (implemented and user-accepted)
+
+2026-10-30 user authorization; checkpoint `m4a-before` preserves accepted M3
+`3f83f7d`. Import a bounded, explicitly supported modern Java Anvil/NBT terrain
+subset into immutable templates. Preserve sparse COW clone/reset/isolation. Extend
+palette/heightmap/biome/light streaming, authoritative opt-in creative-style
+placement/breaking and local full-block collision/step foundations. Retain M3's
+accepted 1.19.4-based knockback/contact policy and existing flat compatibility path.
+Java remains optional and outside movement/combat decisions.
+
+**Gate:** two actual unmodified 26.3 clients render an imported non-flat world,
+walk/jump/collide/cross chunks, place/break and observe supported blocks, reset and
+isolate COW instances, fight/die/respawn with accepted combat. Automated adversarial
+import/protocol/movement/world/Java tests supplement mandatory user acceptance.
+Short M3-matched workloads and import/clone/edit/stream/collision measurements,
+strict full checks, feasible Linux, source/security/engineering reports and final
+commit/tag/rollback required. No unsupported feature may silently corrupt a map.
+
+**Evidence:** [M4A report](M4A_ENGINEERING_REPORT.md),
+[terrain/collision contract](M4A_TERRAIN_CONTRACT.md),
+[protocol evidence](M4A_PROTOCOL_EVIDENCE.md), [security review](M4A_SECURITY_REVIEW.md)
+and [ADR-010](../decisions/ADR-010-m4a-imported-arena-terrain.md). The user accepted
+the corrected full-height imported map and held mining; actual runtime oracles,
+Rust/Java checks, short measurements and clean Linux evidence accompany the final
+checkpoint `m4a-validated`. Subsequent user clarification added narrow sword/tool
+mining duration; drops/durability remain deferred. Stop after M4A.
+
+## Deferred M4B and broader M4 — optional heavy subsystems
 
 Only the narrow inventory/player-combat/death dependencies above move into revised
-M3. Full survival inventory/crafting/containers/enchanting, block interactions,
+M3. Full survival inventory/crafting/containers/enchanting, general block interactions beyond M4A,
 entities/mobs, general physics, redstone/fluid/random ticks, weather, persistence
-and arbitrary import/export remain unauthorized future work.
+and arbitrary import/export beyond the bounded M4A subset remain deferred.
 
 ## Deferred M5 — scaling and compatibility
 
 Regionization/parallel heavy simulation, additional client versions and Bukkit/
-Paper wrappers remain future scope. No next milestone is authorized.
+Paper wrappers remain future scope. Only M4A is authorized; no subsequent milestone is authorized.
 
 ## Why stage order matters
 

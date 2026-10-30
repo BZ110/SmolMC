@@ -1,5 +1,12 @@
 # 02 — Proposed architecture and responsibilities
 
+**M4A implementation update (2026-10-30):** bounded imported templates, sparse
+block/light COW, local collision and held mining now extend the historical scope
+below. See [M4A contract](M4A_TERRAIN_CONTRACT.md), [M4A report](M4A_ENGINEERING_REPORT.md)
+and [ADR-010](../decisions/ADR-010-m4a-imported-arena-terrain.md). One lazy shared
+lighting worker; no world/player ticking task and no required Java hot path.
+Root AGENTS.md and the roadmap govern current authorization.
+
 **Current implementation through M2B:** explicit instance lifecycle, immutable
 shared templates/terrain/registries, sparse chunk COW snapshots, clone/reset/park,
 validated profiles/budgets and retained-memory metrics. See

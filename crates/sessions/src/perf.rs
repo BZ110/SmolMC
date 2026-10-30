@@ -18,6 +18,9 @@ impl Histogram {
         self.0.iter().map(|v| v.load(Relaxed)).collect()
     }
 }
+pub static COLLISION: Histogram = Histogram::new();
+pub static BLOCK_COMMIT: Histogram = Histogram::new();
+pub static BLOCK_WRITE: Histogram = Histogram::new();
 pub static ACTION_PROCESS: Histogram = Histogram::new();
 pub static CRITICAL_WRITE: Histogram = Histogram::new();
 pub static DIRECTORY: Histogram = Histogram::new();
@@ -37,5 +40,5 @@ impl Drop for Timer {
     }
 }
 pub fn snapshot() -> serde_json::Value {
-    serde_json::json!({"action_to_processing_us":ACTION_PROCESS.values(),"combat_event_to_write_us":CRITICAL_WRITE.values(),"directory_us":DIRECTORY.values(),"flush_us":FLUSH.values(),"publish_to_write_us_sampled":AGE.values(),"fanout_versions":FANOUT.load(Relaxed),"positions":POSITIONS.load(Relaxed)})
+    serde_json::json!({"collision_processing_us":COLLISION.values(),"block_commit_us":BLOCK_COMMIT.values(),"block_enqueue_to_write_us":BLOCK_WRITE.values(),"action_to_processing_us":ACTION_PROCESS.values(),"combat_event_to_write_us":CRITICAL_WRITE.values(),"directory_us":DIRECTORY.values(),"flush_us":FLUSH.values(),"publish_to_write_us_sampled":AGE.values(),"fanout_versions":FANOUT.load(Relaxed),"positions":POSITIONS.load(Relaxed)})
 }

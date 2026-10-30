@@ -73,9 +73,15 @@ pub struct TemplateSignature {
 pub struct WorldTemplate {
     pub id: TemplateId,
     pub signature: TemplateSignature,
+    pub terrain: Option<Arc<crate::terrain::ImportedTerrain>>,
 }
 
 impl WorldTemplate {
+    pub fn material(&self, pos: BlockPos) -> Material {
+        self.terrain
+            .as_ref()
+            .map_or_else(|| self.material_at_y(pos[1]), |t| t.material(pos))
+    }
     /// Effective material at a world `y` layer for the template's geometry. Kept as
     /// a lookup so templates stay decoupled from any concrete chunk encoder.
     pub fn material_at_y(&self, y: i32) -> Material {
@@ -188,6 +194,7 @@ pub enum WorldError {
     FeatureDisabled,
     UnsupportedFeature,
     InvalidBudget,
+    Busy,
 }
 
 /// Owns templates and instances together with their lifecycle state machine.
@@ -239,8 +246,33 @@ impl WorldManager {
             return Err(WorldError::CapacityExceeded);
         }
         self.metrics.templates_created.fetch_add(1, Relaxed);
-        self.templates
-            .insert(id, Arc::new(WorldTemplate { id, signature }));
+        self.templates.insert(
+            id,
+            Arc::new(WorldTemplate {
+                id,
+                signature,
+                terrain: None,
+            }),
+        );
+        Ok(())
+    }
+
+    pub fn declare_imported(
+        &mut self,
+        id: TemplateId,
+        signature: TemplateSignature,
+        terrain: Arc<crate::terrain::ImportedTerrain>,
+    ) -> Result<(), WorldError> {
+        if self.templates.contains_key(&id) {
+            return Err(WorldError::TemplateConflict);
+        }
+        if terrain.bytes > crate::terrain::MAX_TEMPLATE_BYTES {
+            return Err(WorldError::WorldBudgetExceeded);
+        }
+        self.declare_template(id, signature)?;
+        Arc::get_mut(self.templates.get_mut(&id).unwrap())
+            .unwrap()
+            .terrain = Some(terrain);
         Ok(())
     }
 
@@ -432,11 +464,16 @@ impl WorldManager {
         for &(pos, material) in edits {
             if pos[0].unsigned_abs() > crate::HORIZONTAL_BOUND as u32
                 || pos[2].unsigned_abs() > crate::HORIZONTAL_BOUND as u32
-                || !(crate::MIN_Y..crate::SURFACE - 1).contains(&pos[1])
+                || if let Some(terrain) = &instance.template.terrain {
+                    !terrain.bounds.contains(pos)
+                } else {
+                    !(crate::MIN_Y..crate::SURFACE - 1).contains(&pos[1])
+                        || !matches!(material, Material::Air | Material::Stone)
+                }
             {
                 return Err(WorldError::InvalidPosition);
             }
-            let base = instance.template.material_at_y(pos[1]);
+            let base = instance.template.material(pos);
             changes.push((
                 pos,
                 if base == material {
@@ -450,6 +487,73 @@ impl WorldManager {
         let overlay = instance
             .overlay
             .apply(&changes, instance.profile.limits, &self.budget)?;
+        let after = overlay.edit_count();
+        self.instances.get_mut(&handle.id).unwrap().overlay = overlay;
+        if after >= before {
+            self.metrics
+                .overlay_edits
+                .fetch_add((after - before) as u64, Relaxed);
+        } else {
+            self.metrics
+                .overlay_edits
+                .fetch_sub((before - after) as u64, Relaxed);
+        }
+        Ok(())
+    }
+    pub fn prepare_blocks(
+        &self,
+        handle: WorldHandle,
+        edits: &[(BlockPos, Material)],
+    ) -> Result<InstanceOverlay, WorldError> {
+        let i = self.validate(handle)?;
+        let Some(base) = &i.template.terrain else {
+            return Err(WorldError::UnsupportedFeature);
+        };
+        if !i.profile.enabled(Feature::WorldEdits) {
+            return Err(WorldError::FeatureDisabled);
+        }
+        if edits.len() > crate::MAX_EDIT_BATCH {
+            return Err(WorldError::BatchTooLarge);
+        }
+        let mut changes = Vec::with_capacity(edits.len());
+        for &(pos, m) in edits {
+            if !base.bounds.contains(pos) {
+                return Err(WorldError::InvalidPosition);
+            }
+            changes.push((
+                pos,
+                if m == base.material(pos) {
+                    None
+                } else {
+                    Some(m)
+                },
+            ));
+        }
+        i.overlay.apply(&changes, i.profile.limits, &self.budget)
+    }
+    pub fn overlay_budget(&self) -> Arc<OverlayBudget> {
+        Arc::clone(&self.budget)
+    }
+    pub fn finish_lighting(
+        base: &crate::terrain::ImportedTerrain,
+        overlay: &InstanceOverlay,
+        patch: crate::lighting::LightPatch,
+        limits: crate::WorldLimits,
+        budget: &Arc<OverlayBudget>,
+    ) -> Result<InstanceOverlay, WorldError> {
+        overlay.with_lighting(base, patch, limits, budget)
+    }
+    pub fn commit_prepared(
+        &mut self,
+        handle: WorldHandle,
+        expected: &InstanceOverlay,
+        overlay: InstanceOverlay,
+    ) -> Result<(), WorldError> {
+        let i = self.validate(handle)?;
+        if !i.overlay.same_snapshot(expected) {
+            return Err(WorldError::Busy);
+        }
+        let before = i.overlay.edit_count();
         let after = overlay.edit_count();
         self.instances.get_mut(&handle.id).unwrap().overlay = overlay;
         if after >= before {

@@ -3,6 +3,18 @@ use crate::{ProtocolError as E, Reader, login::Encoder};
 #[derive(Clone, Debug, PartialEq)]
 pub enum Action {
     Attack(i32),
+    Dig {
+        pos: [i32; 3],
+        face: u8,
+        action: u8,
+        sequence: i32,
+    },
+    Place {
+        pos: [i32; 3],
+        face: u8,
+        hand: u8,
+        sequence: i32,
+    },
     Punch,
     Select(u8),
     Swap,
@@ -118,8 +130,9 @@ pub fn decode(bytes: &[u8]) -> Result<Option<Action>, E> {
         }
         0x42 => {
             let hand = bounded(&mut r, 1)? as u8;
-            r.take(8)?;
-            bounded(&mut r, 5)?;
+            let pos =
+                crate::play::unpack_block_pos(u64::from_be_bytes(r.take(8)?.try_into().unwrap()));
+            let face = bounded(&mut r, 5)? as u8;
             for _ in 0..3 {
                 let v = finite(&mut r)?;
                 if !(-0.001..=1.001).contains(&v) {
@@ -129,7 +142,12 @@ pub fn decode(bytes: &[u8]) -> Result<Option<Action>, E> {
             r.boolean()?;
             r.boolean()?;
             let sequence = bounded(&mut r, i32::MAX)?;
-            Action::Use { hand, sequence }
+            Action::Place {
+                pos,
+                face,
+                hand,
+                sequence,
+            }
         }
         0x43 => {
             let hand = bounded(&mut r, 1)? as u8;
@@ -140,12 +158,20 @@ pub fn decode(bytes: &[u8]) -> Result<Option<Action>, E> {
         }
         0x29 => {
             let action = bounded(&mut r, 8)?;
-            r.take(8)?;
-            if r.byte()? > 5 {
+            let pos =
+                crate::play::unpack_block_pos(u64::from_be_bytes(r.take(8)?.try_into().unwrap()));
+            let face = r.byte()?;
+            if face > 5 {
                 return Err(E::UnexpectedPacket);
             }
-            bounded(&mut r, i32::MAX)?;
+            let sequence = bounded(&mut r, i32::MAX)?;
             match action {
+                0..=3 => Action::Dig {
+                    pos,
+                    face,
+                    action: action as u8,
+                    sequence,
+                },
                 7 => Action::Swap,
                 4 | 5 => Action::Drop,
                 6 => Action::Release,
@@ -205,13 +231,30 @@ pub enum Item {
     Empty,
     IronSword,
     DiamondSword,
+    IronPickaxe,
+    Block {
+        state: i32,
+        item: i32,
+    },
 }
 impl Item {
+    pub fn speed_modifier(self) -> Option<f32> {
+        match self {
+            Self::IronSword | Self::DiamondSword => Some(-2.4),
+            Self::IronPickaxe => Some(-2.8),
+            _ => None,
+        }
+    }
+    pub fn sword(self) -> bool {
+        matches!(self, Self::IronSword | Self::DiamondSword)
+    }
     pub fn id(self) -> i32 {
         match self {
             Self::Empty => 0,
             Self::IronSword => 1045,
             Self::DiamondSword => 1050,
+            Self::IronPickaxe => 1047,
+            Self::Block { item, .. } => item,
         }
     }
 }
@@ -335,12 +378,12 @@ pub fn attributes(id: i32, main: Item) -> Vec<u8> {
     o.varint(1);
     o.varint(5);
     o.raw(&4f64.to_be_bytes());
-    if main == Item::Empty {
-        o.varint(0);
-    } else {
+    if let Some(modifier) = main.speed_modifier() {
         o.varint(1);
         o.string("minecraft:base_attack_speed");
-        o.raw(&(-2.4f32 as f64).to_be_bytes());
+        o.raw(&(modifier as f64).to_be_bytes());
+        o.varint(0);
+    } else {
         o.varint(0);
     }
     o.finish()
@@ -392,6 +435,15 @@ pub fn particles(
     o.varint(0);
     o.finish()
 }
+/// Protocol 777 block destruction animation (actual reference class checked).
+pub fn block_destruction(entity: i32, pos: [i32; 3], stage: i32) -> Vec<u8> {
+    let mut out = Encoder::new(5);
+    out.varint(entity);
+    out.raw(&crate::play::pack_block_pos(pos).to_be_bytes());
+    out.byte(stage as u8);
+    out.finish()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

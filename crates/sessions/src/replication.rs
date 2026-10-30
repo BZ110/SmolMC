@@ -476,7 +476,11 @@ impl InstanceDir {
         let peer = Arc::new(Peer {
             entity,
             uuid: profile.uuid,
-            info: presence::player_info_mode(&profile, if game.is_some() { 2 } else { 1 }).into(),
+            info: presence::player_info_mode(
+                &profile,
+                game.as_ref().map_or(1, |g| g.lock().unwrap().mode),
+            )
+            .into(),
             state: state_rx,
             game: game.clone(),
         });

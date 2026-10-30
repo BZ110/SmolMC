@@ -1,5 +1,12 @@
 # 16 — Feature-capability catalog and disablement matrix
 
+**M4A implementation update (2026-10-30):** bounded imported templates, sparse
+block/light COW, local collision and held mining now extend the historical scope
+below. See [M4A contract](M4A_TERRAIN_CONTRACT.md), [M4A report](M4A_ENGINEERING_REPORT.md)
+and [ADR-010](../decisions/ADR-010-m4a-imported-arena-terrain.md). One lazy shared
+lighting worker; no world/player ticking task and no required Java hot path.
+Root AGENTS.md and the roadmap govern current authorization.
+
 **Current implementation:** The table below is the historical M1/research capability plan. M2B now implements internal sparse COW world edits, profiles, limits and metrics, while client placement, physics, Java, plugins, persistence and survival remain unavailable. See [M2B evidence](M2B_ENGINEERING_REPORT.md). Root AGENTS.md controls authorization.
 
 ## Interpretation

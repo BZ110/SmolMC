@@ -92,6 +92,7 @@ impl InstanceDir {
             return false;
         };
         let mut game = shared.lock().unwrap();
+        game.refresh_terrain();
         game.advance_motion(Instant::now());
         let old_health = game.health;
         let old_velocity = game.velocity;
@@ -303,6 +304,223 @@ impl InstanceDir {
             )],
         );
     }
+    fn block_occupied(&self, pos: [i32; 3]) -> bool {
+        let block = smolmc_world::collision::Aabb {
+            min: pos.map(|v| v as f64),
+            max: pos.map(|v| v as f64 + 1.),
+        };
+        let center = ChunkPos {
+            x: pos[0].div_euclid(16),
+            z: pos[2].div_euclid(16),
+        };
+        for z in center.z - 1..=center.z + 1 {
+            for x in center.x - 1..=center.x + 1 {
+                if let Some(ids) = self.occupants.get(&ChunkPos { x, z }) {
+                    for id in ids {
+                        let pose = self.members[id].pending.lock().unwrap().latest;
+                        if pose.ready
+                            && smolmc_world::collision::Aabb::player(
+                                pose.state.position,
+                                pose.state.crouching,
+                            )
+                            .intersects(block)
+                        {
+                            return true;
+                        }
+                    }
+                }
+            }
+        }
+        false
+    }
+    fn block_action(
+        &self,
+        id: i32,
+        action: pvp::Action,
+        source: ActionSource,
+        game: &mut gameplay::State,
+    ) -> Option<Vec<Vec<u8>>> {
+        use smolmc_protocol_777::play;
+        use smolmc_world::Material;
+        let (clicked, sequence) = match action {
+            pvp::Action::Dig { pos, sequence, .. } | pvp::Action::Place { pos, sequence, .. } => {
+                (pos, sequence)
+            }
+            _ => unreachable!(),
+        };
+        let mut target = clicked;
+        if let pvp::Action::Place { face, .. } = action {
+            let offset = [
+                [0, -1, 0],
+                [0, 1, 0],
+                [0, 0, -1],
+                [0, 0, 1],
+                [-1, 0, 0],
+                [1, 0, 0],
+            ][face as usize];
+            target = std::array::from_fn(|i| clicked[i].saturating_add(offset[i]));
+        }
+        if let Some(owner) = game.blocks.clone()
+            && let Some(mut geometry) = game.terrain.clone()
+        {
+            geometry.overlay = owner.terrain.borrow().clone();
+            let eye = [
+                source.state.position[0],
+                source.state.position[1] + if source.state.crouching { 1.27 } else { 1.62 },
+                source.state.position[2],
+            ];
+            let distance = (0..3)
+                .map(|i| {
+                    let lo = clicked[i] as f64;
+                    let hi = lo + 1.;
+                    (eye[i] - eye[i].clamp(lo, hi)).powi(2)
+                })
+                .sum::<f64>();
+            let subscribed = self.members[&id]
+                .pending
+                .lock()
+                .unwrap()
+                .latest
+                .view
+                .contains(ChunkPos {
+                    x: clicked[0].div_euclid(16),
+                    z: clicked[2].div_euclid(16),
+                });
+            let fresh = sequence > game.block_sequence && subscribed;
+            game.block_sequence = game.block_sequence.max(sequence);
+            let mut desired = None;
+            match action {
+                pvp::Action::Dig { action, .. } => {
+                    target = clicked;
+                    let now = Instant::now();
+                    let material = geometry.block(clicked);
+                    let item = game.inventory.main();
+                    if action == 2 {
+                        if let Some(mining) = game.mining.take() {
+                            self.broadcast_critical(
+                                id,
+                                vec![pvp::block_destruction(id, mining.pos, -1)],
+                                false,
+                            );
+                        }
+                    } else if game.mode == 0
+                        && action != 1
+                        && fresh
+                        && distance < 30.25
+                        && !material.air()
+                    {
+                        if action == 0 {
+                            game.mining = Some(gameplay::Mining {
+                                pos: clicked,
+                                material,
+                                item,
+                                start: game.tick(now),
+                                last_stage: -1,
+                            });
+                        }
+                        if let Some(mining) = game.mining
+                            && mining.pos == clicked
+                            && mining.material == material
+                            && mining.item == item
+                        {
+                            let progress =
+                                gameplay::mining_progress(material, item, source.state.on_ground)
+                                    * (game.tick(now).saturating_sub(mining.start) + 1) as f32;
+                            if progress >= if action == 0 { 1. } else { 0.7 } {
+                                desired = Some(Material::Air);
+                                game.mining = None;
+                                self.broadcast_critical(
+                                    id,
+                                    vec![pvp::block_destruction(id, clicked, -1)],
+                                    false,
+                                );
+                            } else {
+                                let stage = (progress * 10.).clamp(0., 9.) as i32;
+                                self.broadcast_critical(
+                                    id,
+                                    vec![pvp::block_destruction(id, clicked, stage)],
+                                    false,
+                                );
+                                if let Some(m) = &mut game.mining {
+                                    m.last_stage = stage;
+                                }
+                            }
+                        }
+                    }
+                }
+                pvp::Action::Place { hand, .. } => {
+                    let held = if hand == 0 {
+                        game.inventory.main()
+                    } else {
+                        game.inventory.off()
+                    };
+                    if let pvp::Item::Block { state, .. } = held
+                        && let Some(material) = Material::from_state(state)
+                        && material.placeable()
+                        && geometry.block(target).air()
+                        && !geometry.block(clicked).air()
+                        && !self.block_occupied(target)
+                    {
+                        desired = Some(material)
+                    }
+                }
+                _ => {}
+            }
+            if fresh
+                && distance < 30.25
+                && geometry.base.bounds.contains(target)
+                && let Some(material) = desired
+                && let Some(sender) = &self.members[&id].critical
+            {
+                let reply = crate::worlds::lighting::Reply::Client {
+                    sender: sender.clone(),
+                    closed: self.members[&id].closed.clone(),
+                    wake: Arc::clone(&self.members[&id].wake),
+                    positions: if target == clicked {
+                        vec![clicked]
+                    } else {
+                        vec![clicked, target]
+                    },
+                    sequence,
+                };
+                if owner
+                    .worlds
+                    .submit_terrain(
+                        owner.handle,
+                        vec![(target, material)],
+                        true,
+                        Some(geometry.block(target)),
+                        reply,
+                    )
+                    .is_ok()
+                {
+                    return None;
+                }
+            }
+            geometry.overlay = owner.terrain.borrow().clone();
+            let mut packets = vec![play::block_correction(
+                clicked,
+                geometry.block(clicked).state(),
+            )];
+            if target != clicked {
+                packets.push(play::block_correction(
+                    target,
+                    geometry.block(target).state(),
+                ));
+            }
+            packets.push(play::block_ack(sequence));
+            game.terrain = Some(geometry);
+            return Some(packets);
+        }
+        Some(vec![
+            play::block_correction(
+                clicked,
+                smolmc_world::VirtualStone.block(clicked[1]).state(),
+            ),
+            play::block_correction(target, smolmc_world::VirtualStone.block(target[1]).state()),
+            play::block_ack(sequence),
+        ])
+    }
     pub(super) fn action(
         &mut self,
         id: i32,
@@ -320,7 +538,17 @@ impl InstanceDir {
             return;
         }
         let mut game = shared.lock().unwrap();
-        if !game.admit_action(now) {
+        game.refresh_terrain();
+        let admitted = if game.blocks.is_some()
+            && matches!(
+                action,
+                pvp::Action::Dig { .. } | pvp::Action::Place { .. } | pvp::Action::Punch
+            ) {
+            game.admit_build_action(now)
+        } else {
+            game.admit_action(now)
+        };
+        if !admitted {
             self.members[&id].closed.send_replace(true);
             self.members[&id].wake.notify_one();
             return;
@@ -339,12 +567,38 @@ impl InstanceDir {
         game.advance_motion(now);
         source.state.on_ground = game.motion_state().2;
         match action {
+            pvp::Action::Dig { .. } | pvp::Action::Place { .. } => {
+                let packets = self.block_action(id, action, source, &mut game);
+                drop(game);
+                if let Some(packets) = packets {
+                    self.critical(id, gameplay::Delivery::packets(None, packets));
+                }
+            }
             pvp::Action::Punch => {
+                if let Some(mining) = game.mining {
+                    let progress = gameplay::mining_progress(
+                        mining.material,
+                        mining.item,
+                        source.state.on_ground,
+                    ) * (game.tick(now).saturating_sub(mining.start) + 1) as f32;
+                    let stage = (progress * 10.).clamp(0., 9.) as i32;
+                    if stage != mining.last_stage {
+                        self.broadcast_critical(
+                            id,
+                            vec![pvp::block_destruction(id, mining.pos, stage)],
+                            false,
+                        );
+                        game.mining.as_mut().unwrap().last_stage = stage;
+                    }
+                }
                 game.reset_charge(now);
                 drop(game);
                 self.broadcast_critical(id, vec![pvp::swing(id, 0)], false);
             }
             pvp::Action::Attack(target) => {
+                if !game.combat_enabled {
+                    return;
+                }
                 self.metrics.combat_attacks.fetch_add(1, Relaxed);
                 if id == target || !self.members[&id].visible.contains(&target) {
                     return;
@@ -398,6 +652,7 @@ impl InstanceDir {
                 }
                 if kind == gameplay::AttackKind::Knockback {
                     let mut game = shared.lock().unwrap();
+                    game.refresh_terrain();
                     game.advance_motion(now);
                     game.velocity[0] *= 0.6;
                     game.velocity[2] *= 0.6;
@@ -433,6 +688,13 @@ impl InstanceDir {
                 game.inventory.apply(&action);
                 let changed = old != game.inventory.main();
                 if changed {
+                    if let Some(mining) = game.mining.take() {
+                        self.broadcast_critical(
+                            id,
+                            vec![pvp::block_destruction(id, mining.pos, -1)],
+                            false,
+                        );
+                    }
                     game.reset_charge(now);
                 }
                 let attributes = changed.then(|| pvp::attributes(id, game.inventory.main()));

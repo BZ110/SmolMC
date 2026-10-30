@@ -185,6 +185,30 @@ pub fn registry_data(registry: &str, entries: &[String]) -> Vec<u8> {
     out.finish()
 }
 
+pub fn named_tags(
+    registries: &[(String, Vec<String>)],
+    memberships: &std::collections::HashMap<String, Vec<i32>>,
+) -> Vec<u8> {
+    let mut out = Encoder::new(14);
+    out.varint(registries.len() as i32);
+    for (registry, tags) in registries {
+        out.string(registry);
+        out.varint(tags.len() as i32);
+        for tag in tags {
+            out.string(tag);
+            let members = if registry == "minecraft:block" {
+                memberships.get(tag).map_or(&[][..], Vec::as_slice)
+            } else {
+                &[]
+            };
+            out.varint(members.len() as i32);
+            for &id in members {
+                out.varint(id);
+            }
+        }
+    }
+    out.finish()
+}
 pub fn empty_named_tags(registries: &[(String, Vec<String>)]) -> Vec<u8> {
     let mut out = Encoder::new(14);
     out.varint(registries.len() as i32);

@@ -225,3 +225,26 @@ Protocol erratum (2026-10-30): the M2C command advertisement encoder used Play I
 corrects it and checks real vanilla codec decode/re-encode independently. Earlier
 self-contained encrypted tests mirrored the wrong ID and did not establish stock
 GUI command rendering. See [M3 protocol evidence](M3_PROTOCOL_EVIDENCE.md).
+
+## M4A additive extension: schema 1.2 / SDK 0.3.0
+
+Schema 1.0/1.1 still negotiate 0.1.0/0.2.0 and retain their subsets. Schema 1.2
+adds profile byte 2 (`BUILD`) and operations below. Existing incarnation, grants,
+request/event framing, rate budgets and sequence rules remain. Observe grants
+cannot mutate. No IPC filesystem importer or arbitrary path input.
+
+| Opcode | Request | Successful response |
+|---|---|---|
+| 20 | empty | template id u64, configured name string (`stone_flat`/`imported`) |
+| 21 | supported protocol block-state i32 | id i32, name string, properties string, full-cube byte |
+| 22 | world handle, u16 count and positions | u16 count, supported state i32 per position |
+| 23 | world handle, u16 count, position + supported state i32 per edit | empty after atomic block+light commit |
+
+At most 4096 positions/edits; unsupported IDs fail. Terrain edits consume the shared
+edit budget and may return explicit backpressure while one bounded worker or world
+transaction is busy. Stale/reset/destroyed results cannot commit. Existing edit event
+kind 5 follows committed publication. `templates().configured()` discovers the
+operator-selected template; `load(name)` verifies its name. No dynamic map loading
+from Java. Old Air/Stone operations stay available on their representable subset;
+legacy reads fail explicitly on other states instead of mapping them to Air.
+See [M4A contract](M4A_TERRAIN_CONTRACT.md) and [M4A report](M4A_ENGINEERING_REPORT.md).

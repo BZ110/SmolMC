@@ -2,12 +2,18 @@
 //! simulation jobs, timers or persistence. M2A adds an explicit world-instance and
 //! template model with per-instance overlays; the immutable materials and geometry
 //! below remain read-only and shared. No world simulation, Java bridge or survival.
+mod block;
+pub mod collision;
+pub mod lighting;
+mod nbt;
+pub mod terrain;
+pub use block::{Material, STATES, StateInfo};
 mod instance;
 mod overlay;
 mod profile;
 pub use instance::{
     Dimension, TemplateId, TemplateSignature, WorldError, WorldHandle, WorldId, WorldInstance,
-    WorldManager, WorldMetrics, WorldState,
+    WorldManager, WorldMetrics, WorldState, WorldTemplate,
 };
 pub use overlay::{
     DEFAULT_OVERLAY_BUDGET, InstanceError, InstanceOverlay, MAX_EDIT_BATCH, OverlayBudget,
@@ -23,11 +29,6 @@ pub const VIEW_CAPACITY: usize = 25;
 pub const SPAWN: [f64; 3] = [8.0, 65.0, 8.0];
 pub const HORIZONTAL_BOUND: f64 = 100_000.0;
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum Material {
-    Air,
-    Stone,
-}
 #[derive(Debug, Default)]
 pub struct VirtualStone;
 impl VirtualStone {

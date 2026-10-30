@@ -247,6 +247,12 @@ pub fn default_spawn(pos: [i32; 3]) -> Vec<u8> {
     out.raw(&0f32.to_be_bytes());
     out.finish()
 }
+pub fn game_mode(mode: i32) -> Vec<u8> {
+    let mut out = Encoder::new(0x27);
+    out.byte(3);
+    out.raw(&(mode as f32).to_be_bytes());
+    out.finish()
+}
 pub fn start_loading() -> Vec<u8> {
     let mut out = Encoder::new(0x27);
     out.byte(13);

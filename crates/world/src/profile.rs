@@ -10,6 +10,7 @@ pub enum Feature {
     Presence,
     SystemChat,
     WorldEdits,
+    BlockInteractions,
     Physics,
     Mobs,
     Persistence,
@@ -49,6 +50,12 @@ impl WorldProfile {
             limits: WorldLimits::default(),
         }
     }
+    pub fn builder() -> Self {
+        Self {
+            bits: 255,
+            limits: WorldLimits::default(),
+        }
+    }
     pub fn read_only() -> Self {
         Self {
             bits: 63,
@@ -79,6 +86,7 @@ impl WorldProfile {
                 | Feature::Presence
                 | Feature::SystemChat => {}
                 Feature::WorldEdits => profile.bits |= 64,
+                Feature::BlockInteractions => profile.bits |= 192,
                 _ => return Err(WorldError::UnsupportedFeature),
             }
         }
@@ -93,6 +101,7 @@ impl WorldProfile {
             Feature::Presence => 16,
             Feature::SystemChat => 32,
             Feature::WorldEdits => 64,
+            Feature::BlockInteractions => 128,
             _ => 0,
         };
         bit != 0 && self.bits & bit != 0

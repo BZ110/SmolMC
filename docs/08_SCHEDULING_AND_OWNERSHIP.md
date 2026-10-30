@@ -1,5 +1,12 @@
 # 08 — Concurrency, schedulers, ticks and ownership
 
+**M4A implementation update (2026-10-30):** bounded imported templates, sparse
+block/light COW, local collision and held mining now extend the historical scope
+below. See [M4A contract](M4A_TERRAIN_CONTRACT.md), [M4A report](M4A_ENGINEERING_REPORT.md)
+and [ADR-010](../decisions/ADR-010-m4a-imported-arena-terrain.md). One lazy shared
+lighting worker; no world/player ticking task and no required Java hot path.
+Root AGENTS.md and the roadmap govern current authorization.
+
 ## Decision: don't make a global tick the architecture
 Minecraft traditionally specifies many game mechanics in ticks, often targeting 20 TPS. But a static PvP lobby with no simulated blocks needs **network events and minimal player synchronization**, not a 20Hz full-world pass. Keep protocol deadlines and active-player updates; park idle world simulation.
 

@@ -833,6 +833,10 @@ dependencies = [
 [[package]]
 name = "smolmc-world"
 version = "0.1.0"
+dependencies = [
+ "flate2",
+ "serde_json",
+]
 
 [[package]]
 name = "socket2"

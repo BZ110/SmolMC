@@ -5,24 +5,20 @@
 
 ## Current authority
 
-**M2B implemented and validated; stop before M2C.** The user accepted M2A after
-real stock-client verification, then explicitly authorized M2B only. Git tag
-`m2a-accepted` preserves its pre-M2B checkpoint. Read `M2B_ENGINEERING_REPORT.md`,
-`M2B_PROTOCOL_EVIDENCE.md`, ADR-006 and historical M2A/M1D reports.
-84 tests, fmt, Clippy, release/examples and listener recovery pass on macOS/Alpine;
-matching source hashes and detailed resource/active-load evidence are recorded.
-The ignored resource probe was run explicitly, not counted as an ordinary test.
+M4A imported arena terrain and interactions are implemented and user-accepted.
+Checkpoint `m4a-before` preserves accepted M3 `3f83f7d`; final checkpoint
+`m4a-validated` records implementation/evidence. Read the M4A engineering,
+terrain-contract, protocol/security reports and ADR-010. No M4B, general survival,
+plugin ecosystem, Bukkit/Paper compatibility or M5 is authorized. Stop after M4A.
 
-Preserve shared immutable terrain/registries/template descriptors, sparse COW
-snapshot ownership, retained-byte reservations, atomic bounded edits and stale
-handle safety. Empty/parked worlds own no worker/timer/watch channel. Required
-protocol/world/player/presence/chat capabilities cannot be disabled; read-only
-world profiles disable trusted edits; heavy/unavailable capabilities fail before
-initialization. Charged bytes are not RSS or an OS memory limit.
-
-Default bounds remain buried Air/Stone only; no surface edits/import/persistence,
-Java/SDK/plugins or survival. Preserve M1D ingress coalescing/reserved leave and
-bounded transport/auth. **No M2C or later implementation is authorized.**
+Preserve immutable imported/virtual templates and encoded packets, sparse block/
+light COW, transaction/generation checks, world isolation, accepted M3 classic PvP,
+fair reliable replication and optional Java schema 1.0/1.1/1.2 subsets. No unsafe,
+per-world/player ticking worker, full physics, fluid/redstone or persistence work.
+The explicit removal import mode is lossy; never claim arbitrary map fidelity.
+Held mining was specifically added by user clarification; drops and durability
+remain deferred. User acceptance provenance and final source/binary hashes are
+recorded separately; do not substitute fixtures for GUI evidence.
 
 ## Milestone issue contract (copy into task ticket)
 - Title, rationale, and preconditions.

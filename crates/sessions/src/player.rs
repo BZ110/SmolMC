@@ -20,6 +20,7 @@ pub struct Player {
     pub rotation: [f32; 2],
     pub flying: bool,
     pub on_ground: bool,
+    pub min_y: f64,
     pub crouching: bool,
     pub sprinting: bool,
     pub pending_teleport: Option<(i32, Instant)>,
@@ -44,6 +45,7 @@ impl Player {
             rotation: [0.0; 2],
             flying: false,
             on_ground: false,
+            min_y: f64::from(SURFACE) - 0.01,
             crouching: false,
             sprinting: false,
             pending_teleport: Some((1, now + ACK_TIMEOUT)),
@@ -192,7 +194,7 @@ impl Player {
         if !position.iter().all(|v| v.is_finite())
             || position[0].abs() > HORIZONTAL_BOUND
             || position[2].abs() > HORIZONTAL_BOUND
-            || position[1] < f64::from(SURFACE) - 0.01
+            || position[1] < self.min_y
             || position[1] > 512.0
         {
             return Err(invalid("position outside M1C bounds"));

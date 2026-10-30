@@ -1,5 +1,6 @@
 //! Trusted in-process M2A control plane. Locks cover lifecycle/admin work only;
 //! movement and chunk serialization consume per-world immutable watch snapshots.
+pub(crate) mod lighting;
 use crate::control::{ControlError, ControlEvent, EVENT_CAPACITY, Events, PlayerSnapshot};
 use smolmc_protocol_777::login::Profile;
 use smolmc_world::{
@@ -29,10 +30,13 @@ struct Catalog {
     players: HashMap<i32, Player>,
     routes: Vec<WorldId>,
     commands: HashMap<String, u64>,
+    light_pending: HashMap<WorldId, WorldHandle>,
 }
 pub struct Worlds {
     catalog: Mutex<Catalog>,
     events: OnceLock<Events>,
+    light_sender: OnceLock<lighting::Sender>,
+    light_task: Mutex<Option<tokio::task::JoinHandle<()>>>,
 }
 pub struct Membership {
     worlds: Arc<Worlds>,
@@ -52,8 +56,11 @@ impl Worlds {
                 players: HashMap::new(),
                 routes: vec![seed],
                 commands: HashMap::new(),
+                light_pending: HashMap::new(),
             }),
             events: OnceLock::new(),
+            light_sender: OnceLock::new(),
+            light_task: Mutex::new(None),
         }
     }
     pub fn route(&self, sequence: usize) -> Result<WorldId, WorldError> {
@@ -71,10 +78,16 @@ impl Worlds {
     }
     pub fn create_profiled(&self, profile: WorldProfile) -> Result<WorldHandle, WorldError> {
         let mut c = self.catalog.lock().unwrap();
-        // Exactly the existing virtual-stone template; generalized imports/profiles are M2B+.
+        let spawn = c
+            .manager
+            .template(smolmc_world::TemplateId(1))
+            .ok_or(WorldError::UnknownTemplate)?
+            .signature
+            .dimension
+            .spawn;
         let id = c
             .manager
-            .create_profiled(smolmc_world::TemplateId(1), [8, 65, 8], profile)?;
+            .create_profiled(smolmc_world::TemplateId(1), spawn, profile)?;
         c.routes.push(id);
         eprintln!("world={} event=created generation=1", id.0);
         let handle = c.manager.handle(id)?;
@@ -95,6 +108,9 @@ impl Worlds {
         edits: &[([i32; 3], Material)],
     ) -> Result<(), WorldError> {
         let mut c = self.catalog.lock().unwrap();
+        if c.manager.validate(handle)?.template.terrain.is_some() {
+            return Err(WorldError::UnsupportedFeature);
+        }
         c.manager.set_blocks(handle, edits)?;
         if let Some(runtime) = c.worlds.get(&handle.id) {
             runtime
@@ -103,6 +119,20 @@ impl Worlds {
         }
         self.emit(&mut c, 5, handle, None, String::new(), None);
         Ok(())
+    }
+    #[cfg(test)]
+    pub(crate) fn terrain_snapshot(
+        &self,
+        handle: WorldHandle,
+    ) -> Result<InstanceOverlay, WorldError> {
+        Ok(self
+            .catalog
+            .lock()
+            .unwrap()
+            .manager
+            .validate(handle)?
+            .overlay
+            .clone())
     }
     pub fn clone_world(&self, source: WorldHandle) -> Result<WorldHandle, WorldError> {
         let mut c = self.catalog.lock().unwrap();
@@ -137,6 +167,7 @@ impl Worlds {
     pub fn reset(&self, handle: WorldHandle) -> Result<WorldHandle, WorldError> {
         let mut c = self.catalog.lock().unwrap();
         let new = c.manager.reset(handle)?;
+        c.light_pending.remove(&handle.id);
         // Occupied reset is rejected, so idle worlds retain no watch allocation.
         c.worlds.remove(&handle.id);
         eprintln!(
@@ -149,6 +180,7 @@ impl Worlds {
     pub fn destroy(&self, handle: WorldHandle) -> Result<(), WorldError> {
         let mut c = self.catalog.lock().unwrap();
         c.manager.destroy(handle)?;
+        c.light_pending.remove(&handle.id);
         c.worlds.remove(&handle.id);
         c.routes.retain(|id| *id != handle.id);
         if c.routes.is_empty() {
@@ -310,7 +342,8 @@ impl Worlds {
             .iter()
             .map(|p| {
                 i.overlay
-                    .get_block(*p, |y| smolmc_world::VirtualStone.block(y))
+                    .override_at(*p)
+                    .unwrap_or_else(|| i.template.material(*p))
             })
             .collect())
     }

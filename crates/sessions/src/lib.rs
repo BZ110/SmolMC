@@ -6,6 +6,7 @@ use smolmc_network::{
     transport::{CONTROL_LIMIT, Connection},
 };
 use smolmc_protocol_777::{self as wire, Reader, login, play, presence};
+pub use smolmc_world::terrain::ImportBounds;
 use smolmc_world::{
     ChunkPos, Dimension, MIN_Y, Material, SPAWN, SURFACE, TemplateId, TemplateSignature,
     WorldError, WorldHandle, WorldId, WorldManager,
@@ -311,7 +312,10 @@ pub struct Service {
     pub metrics: Arc<Metrics>,
     protocol_session: [u8; 16],
     next_entity: AtomicI32,
-    stone: StoneChunk,
+    stone: Option<StoneChunk>,
+    imported: Option<Arc<smolmc_world::terrain::ImportedTerrain>>,
+    imported_chunks: Option<smolmc_chunks::ImportedChunks>,
+    spawn: [f64; 3],
     replication: tokio::sync::OnceCell<replication::Hub>,
     worlds: Arc<worlds::Worlds>,
     seed: WorldId,
@@ -325,10 +329,79 @@ impl Service {
         Self::new_profile(smolmc_world::WorldProfile::default())
     }
     fn new_profile(profile: smolmc_world::WorldProfile) -> io::Result<Self> {
+        Self::new_terrain(profile, None, SPAWN)
+    }
+    fn new_terrain(
+        profile: smolmc_world::WorldProfile,
+        imported: Option<Arc<smolmc_world::terrain::ImportedTerrain>>,
+        spawn: [f64; 3],
+    ) -> io::Result<Self> {
         let metrics = Arc::new(Metrics::default());
-        let registries = RegistrySet::load()?;
-        let stone = StoneChunk::new(registries.biome_id);
-        let (worlds, seed) = Self::bootstrap_worlds(&registries, profile)?;
+        let mut registries = RegistrySet::load()?;
+        if imported.is_some() {
+            let rows: serde_json::Value =
+                serde_json::from_str(include_str!("../data/tag_names.json"))
+                    .map_err(|_| invalid("tag inventory"))?;
+            let registries_names = rows
+                .as_array()
+                .ok_or_else(|| invalid("tag inventory"))?
+                .iter()
+                .map(|row| {
+                    (
+                        row["registry"].as_str().unwrap().to_owned(),
+                        row["tags"]
+                            .as_array()
+                            .unwrap()
+                            .iter()
+                            .map(|n| n.as_str().unwrap().to_owned())
+                            .collect(),
+                    )
+                })
+                .collect::<Vec<_>>();
+            let members = serde_json::from_str(include_str!("../data/mining_tags.json"))
+                .map_err(|_| invalid("mining tag metadata"))?;
+            registries.encoded_bytes -= registries.tags.len();
+            registries.tags = Arc::from(login::named_tags(&registries_names, &members));
+            registries.encoded_bytes += registries.tags.len();
+        }
+        let stone = imported
+            .is_none()
+            .then(|| StoneChunk::new(registries.biome_id));
+        let (mut worlds, mut seed) = Self::bootstrap_worlds(&registries, profile)?;
+        let imported_chunks = if let Some(base) = &imported {
+            let snapshot = smolmc_world::collision::TerrainSnapshot {
+                base: Arc::clone(base),
+                overlay: smolmc_world::InstanceOverlay::new(),
+            };
+            if !spawn.iter().all(|v| v.is_finite()) || !snapshot.grounded(spawn, false) {
+                return Err(invalid("imported spawn requires supported ground"));
+            }
+            let mut manager = WorldManager::new();
+            let signature = TemplateSignature {
+                surface: SURFACE,
+                material_below: Material::Air,
+                dimension: Dimension {
+                    key: registries.dimension_id,
+                    min_y: MIN_Y,
+                    height: smolmc_world::HEIGHT,
+                    spawn: spawn.map(|n| n.floor() as i32),
+                },
+            };
+            manager
+                .declare_imported(TemplateId(1), signature, Arc::clone(base))
+                .map_err(|_| invalid("imported template registration"))?;
+            seed = manager
+                .create_profiled(TemplateId(1), signature.dimension.spawn, profile)
+                .map_err(|_| invalid("imported instance creation"))?;
+            worlds = manager;
+            Some(smolmc_chunks::ImportedChunks::new(
+                base,
+                registries.biome_id,
+                Self::biome_names()?.len(),
+            )?)
+        } else {
+            None
+        };
         Ok(Self {
             auth: Auth::new()?,
             registries,
@@ -341,6 +414,9 @@ impl Service {
             protocol_session: smolmc_auth::random_uuid()?,
             next_entity: AtomicI32::new(1),
             stone,
+            imported,
+            imported_chunks,
+            spawn,
             replication: tokio::sync::OnceCell::new(),
             worlds: Arc::new(worlds::Worlds::new(worlds, seed)),
             seed,
@@ -348,6 +424,127 @@ impl Service {
             gameplay: std::sync::OnceLock::new(),
             gameplay_epoch: Instant::now(),
         })
+    }
+    pub fn biome_names() -> io::Result<std::collections::HashMap<String, i32>> {
+        let rows: serde_json::Value =
+            serde_json::from_str(include_str!("../data/registry_names.json"))
+                .map_err(|_| invalid("biome inventory"))?;
+        let names = rows
+            .as_array()
+            .and_then(|rows| {
+                rows.iter()
+                    .find(|r| r["registry"] == "minecraft:worldgen/biome")
+            })
+            .and_then(|r| r["entries"].as_array())
+            .ok_or_else(|| invalid("biome inventory"))?;
+        Ok(names
+            .iter()
+            .enumerate()
+            .map(|(i, n)| (n.as_str().unwrap().to_owned(), i as i32))
+            .collect())
+    }
+    pub fn import_instances(
+        count: usize,
+        profile: smolmc_world::WorldProfile,
+        path: &std::path::Path,
+        bounds: smolmc_world::terrain::ImportBounds,
+        spawn: Option<[f64; 3]>,
+        convert: bool,
+    ) -> io::Result<Self> {
+        let base = smolmc_world::terrain::import_world_policy(
+            path,
+            bounds,
+            &Self::biome_names()?,
+            convert,
+        )?;
+        for (state, count) in &base.removed_palette_entries {
+            eprintln!(
+                "import_conversion target=minecraft:air palette_entries={count} source={state}"
+            );
+        }
+        let spawn = spawn
+            .or_else(|| {
+                base.safe_spawn([
+                    (bounds.min[0] + bounds.max[0]) / 2,
+                    (bounds.min[2] + bounds.max[2]) / 2,
+                ])
+            })
+            .ok_or_else(|| invalid("no safe imported spawn"))?;
+        Self::with_terrain_instances(count, profile, base, spawn)
+    }
+    pub fn with_terrain_instances(
+        count: usize,
+        profile: smolmc_world::WorldProfile,
+        base: Arc<smolmc_world::terrain::ImportedTerrain>,
+        spawn: [f64; 3],
+    ) -> io::Result<Self> {
+        if !(1..=smolmc_world::instance_limit()).contains(&count) {
+            return Err(invalid("instances must be 1..4096"));
+        }
+        let service = Self::new_terrain(profile, Some(base), spawn)?;
+        for _ in 1..count {
+            service
+                .create_world_with_profile(profile)
+                .map_err(|_| invalid("imported instance creation"))?;
+        }
+        Ok(service)
+    }
+    pub async fn edit_terrain(
+        &self,
+        world: WorldHandle,
+        edits: Vec<([i32; 3], Material)>,
+    ) -> Result<(), WorldError> {
+        self.worlds.edit_terrain(world, edits).await
+    }
+    pub fn arena_spawn(&self) -> [f64; 3] {
+        self.spawn
+    }
+    pub fn imported_terrain(&self) -> Option<&Arc<smolmc_world::terrain::ImportedTerrain>> {
+        self.imported.as_ref()
+    }
+    fn world_mode(&self, world: WorldHandle) -> i32 {
+        if self.imported.is_some() {
+            if self
+                .worlds
+                .resources(world)
+                .is_ok_and(|r| r.profile.enabled(smolmc_world::Feature::BlockInteractions))
+            {
+                0
+            } else {
+                2
+            }
+        } else if self.gameplay_config().enabled {
+            2
+        } else {
+            1
+        }
+    }
+    fn base_sky(&self, pos: ChunkPos, sy: i32) -> Arc<[u8]> {
+        self.imported
+            .as_ref()
+            .and_then(|t| t.chunks.get(&pos))
+            .and_then(|c| c.light_sections.get(&sy))
+            .and_then(|l| l.0.clone())
+            .unwrap_or_else(|| {
+                smolmc_world::lighting::uniform(
+                    if self
+                        .imported
+                        .as_ref()
+                        .is_none_or(|t| !t.chunks.contains_key(&pos))
+                        || sy >= 20
+                    {
+                        255
+                    } else {
+                        0
+                    },
+                )
+            })
+    }
+    fn base_block(&self, pos: [i32; 3]) -> Material {
+        self.imported.as_ref().map_or_else(
+            || smolmc_world::VirtualStone.block(pos[1]),
+            |t| t.material(pos),
+        )
     }
     /// Create a bounded set of identical arenas and route successful joins round-robin.
     pub fn with_instances(count: usize) -> io::Result<Self> {
@@ -500,7 +697,12 @@ impl Service {
             || config.spawn.iter().any(|v| !v.is_finite())
             || config.spawn[0].abs() > 99950.
             || config.spawn[2].abs() > 99950.
-            || !(64.0..=512.).contains(&config.spawn[1])
+            || !(if self.imported.is_some() {
+                -64.0..=319.0
+            } else {
+                64.0..=512.0
+            })
+            .contains(&config.spawn[1])
         {
             return Err(invalid("invalid/late arena configuration"));
         }
@@ -509,7 +711,10 @@ impl Service {
             .map_err(|_| invalid("arena already configured"))
     }
     fn gameplay_config(&self) -> gameplay::Config {
-        self.gameplay.get().copied().unwrap_or_default()
+        self.gameplay.get().copied().unwrap_or(gameplay::Config {
+            enabled: false,
+            spawn: self.spawn,
+        })
     }
     fn player_damage_type(&self) -> i32 {
         self.registries.player_damage_id
@@ -525,10 +730,14 @@ impl Service {
         self.registries.encoded_bytes
     }
     pub fn chunk_template_bytes(&self) -> usize {
-        self.stone.shared_bytes()
+        self.imported_chunks.as_ref().map_or_else(
+            || self.stone.as_ref().unwrap().shared_bytes(),
+            |c| c.bytes(),
+        )
     }
     pub async fn shutdown(&self) -> io::Result<()> {
         self.auth.wait_idle().await?;
+        self.worlds.stop_lighting().await?;
         if let Some(hub) = self.replication.get() {
             hub.shutdown().await?;
         }
@@ -610,13 +819,21 @@ impl Service {
             return Err(error);
         }
         self.metrics.config_completed.fetch_add(1, Relaxed);
+        let instance = self
+            .worlds
+            .route(self.next_route.fetch_add(1, Relaxed))
+            .map_err(|_| invalid("no ready world"))?;
         deadline(
             5,
             connection.outbound.send(&login::play_login_with_mode(
                 entity,
                 self.registries.dimension_id,
                 MAX_PLAYERS as i32,
-                if self.gameplay_config().enabled { 2 } else { 1 },
+                self.world_mode(
+                    self.worlds
+                        .handle(instance)
+                        .map_err(|_| invalid("unknown world"))?,
+                ),
             )),
         )
         .await?;
@@ -628,18 +845,15 @@ impl Service {
             );
         }
         let result = self
-            .play(
-                &mut connection,
-                &context,
-                entity,
-                profile,
-                self.worlds
-                    .route(self.next_route.fetch_add(1, Relaxed))
-                    .map_err(|_| invalid("no ready world"))?,
-            )
+            .play(&mut connection, &context, entity, profile, instance)
             .await;
         if context.trace {
             eprintln!("connection={} play_ended=true", context.id);
+        }
+        if context.trace
+            && let Err(error) = &result
+        {
+            eprintln!("connection={} play_failure={error}", context.id);
         }
         if let Err(error) = &result
             && matches!(
@@ -647,7 +861,14 @@ impl Service {
                 io::ErrorKind::InvalidData | io::ErrorKind::TimedOut
             )
         {
-            let _=deadline(1,connection.outbound.send(&login::disconnect_common(0x20,"Connection exceeded a protocol, resource or acknowledgement limit. Inventory editing and gameplay interactions remain unsupported."))).await;
+            let _ = deadline(
+                1,
+                connection.outbound.send(&login::disconnect_common(
+                    0x20,
+                    "Connection exceeded a protocol, resource or acknowledgement limit.",
+                )),
+            )
+            .await;
         }
         result
     }
@@ -661,7 +882,7 @@ impl Service {
         connection
             .outbound
             .send(&wire::status_response_with(
-                "SmolMC M2B: isolated worlds / players / system chat",
+                "SmolMC M4A: isolated arenas / imported terrain / PvP",
                 count,
                 MAX_PLAYERS,
             ))
@@ -806,11 +1027,14 @@ impl Service {
         profile: Arc<login::Profile>,
         instance: WorldId,
     ) -> io::Result<()> {
-        let config = self.gameplay_config();
-        let game = config.enabled.then(|| {
+        let mut config = self.gameplay_config();
+        let arena = config.enabled || self.imported.is_some();
+        let game = arena.then(|| {
             let mut state = gameplay::State::new(Instant::now(), config.spawn);
             state.align_clock(self.gameplay_epoch);
             state.trace = context.trace;
+            state.combat_enabled = config.enabled;
+            state.mode = self.world_mode(self.worlds.handle(instance).unwrap());
             Arc::new(Mutex::new(state))
         });
         let damage_type = if config.enabled {
@@ -846,10 +1070,39 @@ impl Service {
             deadline(5, connection.outbound.send(&play::commands(&names))).await?;
         }
         let mut terrain = membership.terrain.borrow_and_update().clone();
+        if self.imported.is_some() {
+            player.min_y = -64.;
+        }
+        let mut geometry =
+            self.imported
+                .as_ref()
+                .map(|base| smolmc_world::collision::TerrainSnapshot {
+                    base: Arc::clone(base),
+                    overlay: terrain.clone(),
+                });
+        if let Some(current) = &geometry {
+            config.spawn = current
+                .safe_spawn(config.spawn)
+                .ok_or_else(|| invalid("no safe terrain join point"))?;
+            player.spawn_at(config.spawn);
+        }
+        if let Some(game) = &game {
+            let mut g = game.lock().unwrap();
+            g.terrain = geometry.clone();
+            if geometry.is_some() {
+                g.blocks = Some(gameplay::BlockOwner {
+                    terrain: membership.terrain.clone(),
+                    worlds: Arc::clone(&self.worlds),
+                    handle: membership.handle,
+                });
+                g.build_kit();
+                g.reposition(Instant::now(), config.spawn);
+            }
+        }
         let mut teleport_id = 1i32;
         for packet in [
             play::default_spawn(config.spawn.map(|v| v as i32)),
-            if config.enabled {
+            if arena {
                 wire::pvp::abilities()
             } else {
                 play::abilities(false)
@@ -858,9 +1111,9 @@ impl Service {
             play::center(player.view.center().x, player.view.center().z),
             play::start_loading(),
             play::position(1, config.spawn, [0.0, 0.0]),
-            presence::player_info_mode(&profile, if config.enabled { 2 } else { 1 }),
+            presence::player_info_mode(&profile, self.world_mode(membership.handle)),
             presence::system(
-                "[System] M2B: chat is a server relay; player-chat signatures are not verified.",
+                "[System] Chat is a server relay; player-chat signatures are not verified.",
             )
             .map_err(malformed)?,
         ] {
@@ -897,7 +1150,8 @@ impl Service {
         let mut publish_due = Instant::now();
         let mut viewer_dirty = false;
         let mut viewer_due = Instant::now();
-        let mut scratch = Vec::with_capacity(self.stone.shared_bytes() + 9);
+        let mut scratch =
+            Vec::with_capacity(self.stone.as_ref().map_or(0, |s| s.shared_bytes() + 9));
         let mut window = Instant::now();
         let mut packets = 0usize;
         loop {
@@ -927,6 +1181,17 @@ impl Service {
                         .move_to(target)
                         .map_err(|_| invalid("switch target expired"))?;
                 }
+                if let Some(base) = &self.imported {
+                    let current = smolmc_world::collision::TerrainSnapshot {
+                        base: Arc::clone(base),
+                        overlay: membership.terrain.borrow().clone(),
+                    };
+                    config.spawn = current
+                        .safe_spawn(self.gameplay_config().spawn)
+                        .ok_or_else(|| {
+                            invalid("no safe terrain spawn near configured arena point")
+                        })?;
+                }
                 if let Some(game) = &game
                     && let Some(notices) = game.lock().unwrap().notices.as_mut()
                 {
@@ -952,9 +1217,10 @@ impl Service {
                     self.metrics.combat_respawns.fetch_add(1, Relaxed);
                     deadline(
                         5,
-                        connection
-                            .outbound
-                            .send(&wire::pvp::respawn(self.registries.dimension_id, 2)),
+                        connection.outbound.send(&wire::pvp::respawn(
+                            self.registries.dimension_id,
+                            self.world_mode(target),
+                        )),
                     )
                     .await?;
                     if let Some(game) = &game {
@@ -974,6 +1240,16 @@ impl Service {
                         }
                     }
                 }
+                deadline(
+                    5,
+                    connection
+                        .outbound
+                        .send(&play::game_mode(self.world_mode(target))),
+                )
+                .await?;
+                if let Some(game) = &game {
+                    game.lock().unwrap().mode = self.world_mode(target);
+                }
                 corpse_due = None;
                 player.switch_world(now, teleport_id);
                 player.spawn_at(config.spawn);
@@ -981,6 +1257,21 @@ impl Service {
                     game.lock().unwrap().reposition(now, config.spawn);
                 }
                 terrain = membership.terrain.borrow_and_update().clone();
+                geometry =
+                    self.imported
+                        .as_ref()
+                        .map(|base| smolmc_world::collision::TerrainSnapshot {
+                            base: Arc::clone(base),
+                            overlay: terrain.clone(),
+                        });
+                if let Some(game) = &game {
+                    let mut g = game.lock().unwrap();
+                    g.terrain = geometry.clone();
+                    if let Some(owner) = &mut g.blocks {
+                        owner.handle = membership.handle;
+                        owner.terrain = membership.terrain.clone();
+                    }
+                }
                 (replica_lease, inbox) = hub
                     .join_game(
                         entity,
@@ -1042,10 +1333,34 @@ impl Service {
                         if player.view.contains(chunk)
                             && terrain.override_at(pos) != latest.override_at(pos)
                         {
-                            let material = latest.override_at(pos).unwrap_or(Material::Stone);
+                            let material = latest
+                                .override_at(pos)
+                                .unwrap_or_else(|| self.base_block(pos));
                             connection
                                 .outbound
                                 .send(&play::block_correction(pos, material_state(material)))
+                                .await?;
+                        }
+                    }
+                    for pos in player.view.positions() {
+                        let mut sections = Vec::new();
+                        for sy in -4..20 {
+                            let key = (pos, sy);
+                            if terrain.sky_section(key) != latest.sky_section(key) {
+                                let data = latest
+                                    .sky_section(key)
+                                    .map(Arc::<[u8]>::from)
+                                    .unwrap_or_else(|| self.base_sky(pos, sy));
+                                sections.push((sy, data));
+                            }
+                        }
+                        if !sections.is_empty() {
+                            connection
+                                .outbound
+                                .send(&smolmc_chunks::light_update(
+                                    pos,
+                                    sections.iter().map(|(sy, d)| (*sy, d.as_ref())),
+                                ))
                                 .await?;
                         }
                     }
@@ -1053,6 +1368,12 @@ impl Service {
                 })
                 .await?;
                 terrain = latest;
+                if let Some(g) = &mut geometry {
+                    g.overlay = terrain.clone();
+                }
+                if let Some(game) = &game {
+                    game.lock().unwrap().terrain = geometry.clone();
+                }
             }
             if publish_dirty && now >= publish_due {
                 replica_lease.update(player.replica())?;
@@ -1099,13 +1420,34 @@ impl Service {
                         let Some(pos) = player.view.next_missing() else {
                             break;
                         };
-                        self.stone.encode(pos, &mut scratch);
-                        connection.outbound.send(&scratch).await?;
+                        if let Some(packet) =
+                            self.imported_chunks.as_ref().and_then(|c| c.packet(pos))
+                        {
+                            connection.outbound.send(packet).await?;
+                        } else {
+                            if let Some(chunks) = &self.imported_chunks {
+                                chunks.encode(pos, &mut scratch)
+                            } else {
+                                self.stone.as_ref().unwrap().encode(pos, &mut scratch)
+                            }
+                            connection.outbound.send(&scratch).await?;
+                        }
                         // Replay bounded instance edits after shared base bytes, before batch completion.
                         for (block, material) in terrain.chunk_edits(pos) {
                             connection
                                 .outbound
                                 .send(&play::block_correction(block, material_state(material)))
+                                .await?;
+                        }
+                        let lights: Vec<_> = terrain
+                            .light_sections()
+                            .filter(|(key, _)| key.0 == pos)
+                            .map(|(key, data)| (key.1, data))
+                            .collect();
+                        if !lights.is_empty() {
+                            connection
+                                .outbound
+                                .send(&smolmc_chunks::light_update(pos, lights))
                                 .await?;
                         }
                         if !player.view.insert(pos) {
@@ -1120,6 +1462,9 @@ impl Service {
                 })
                 .await?;
                 player.batch_sent(Instant::now());
+                if self.imported_chunks.is_some() && player.view.next_missing().is_none() {
+                    scratch = Vec::new();
+                }
             }
             let mut due = player.next_deadline();
             if let Some(corpse_due) = corpse_due {
@@ -1135,6 +1480,7 @@ impl Service {
                 _=tokio::time::sleep_until(due)=>continue,
                 event=critical_message(&mut inbox.critical)=>{
                     match event? {
+                        gameplay::Delivery::TerrainCommitted{world,packets,at}=>{if world==membership.handle {deadline(5,connection.outbound.send_batch(&packets)).await?;#[cfg(test)]crate::perf::BLOCK_WRITE.record(at.elapsed().as_micros()as u64);}#[cfg(not(test))]let _=at;},
                         gameplay::Delivery::Packets{entity:target,packets,at}=>{
                             if let Some(target)=target {
                                 deadline(5,peer_view.flush(&mut connection.outbound,&inbox)).await?;
@@ -1179,13 +1525,11 @@ impl Service {
                 return Err(invalid("Play packet rate exceeded"));
             }
             self.metrics.play_packets_observed.fetch_add(1, Relaxed);
-            if config.enabled
-                && let Some(action) = wire::pvp::decode(&packet).map_err(malformed)?
-            {
+            if arena && let Some(action) = wire::pvp::decode(&packet).map_err(malformed)? {
                 replica_lease.action(action, player.replica(), damage_type)?;
                 continue;
             }
-            if config.enabled
+            if arena
                 && packet.first() == Some(&0x0d)
                 && let Some(game) = &game
             {
@@ -1237,7 +1581,63 @@ impl Service {
                     player.batch_ack(desired, now)?;
                     self.metrics.chunk_batches_acked.fetch_add(1, Relaxed);
                 }
-                play::Event::Move(movement) => {
+                play::Event::Move(mut movement) => {
+                    #[cfg(test)]
+                    let collision_start = Instant::now();
+                    if let Some(current) = &geometry
+                        && player.pending_teleport.is_none()
+                        && movement
+                            .position
+                            .is_some_and(|p| p[1] < -60. && p.iter().all(|n| n.is_finite()))
+                    {
+                        config.spawn = current
+                            .safe_spawn(self.gameplay_config().spawn)
+                            .ok_or_else(|| invalid("no safe terrain void recovery point"))?;
+                        teleport_id = teleport_id
+                            .checked_add(1)
+                            .ok_or_else(|| invalid("teleport IDs exhausted"))?;
+                        player.switch_world(now, teleport_id);
+                        player.spawn_at(config.spawn);
+                        if let Some(game) = &game {
+                            game.lock().unwrap().reposition(now, config.spawn);
+                        }
+                        deadline(
+                            5,
+                            connection.outbound.send(&play::position(
+                                teleport_id,
+                                config.spawn,
+                                player.rotation,
+                            )),
+                        )
+                        .await?;
+                        replica_lease.update(player.replica())?;
+                        continue;
+                    }
+                    let mut corrected = false;
+                    if player.pending_teleport.is_none()
+                        && let Some(geometry) = &geometry
+                        && let Some(wanted) = movement.position
+                    {
+                        let delta = std::array::from_fn(|i| wanted[i] - player.position[i]);
+                        let resolved = smolmc_world::collision::resolve(
+                            player.position,
+                            delta,
+                            player.crouching,
+                            player.on_ground,
+                            |p| geometry.block(p),
+                        )
+                        .ok_or_else(|| invalid("collision work/coordinate budget"))?;
+                        let position =
+                            std::array::from_fn(|i| player.position[i] + resolved.delta[i]);
+                        let inside = position[0] - 0.3 >= geometry.base.bounds.min[0] as f64
+                            && position[0] + 0.3 <= geometry.base.bounds.max[0] as f64
+                            && position[2] - 0.3 >= geometry.base.bounds.min[2] as f64
+                            && position[2] + 0.3 <= geometry.base.bounds.max[2] as f64;
+                        movement.position = Some(if !inside { player.position } else { position });
+                        corrected = !inside
+                            || (0..3)
+                                .any(|i| (movement.position.unwrap()[i] - wanted[i]).abs() > 0.001);
+                    }
                     if player.movement(movement, now)? {
                         self.metrics.chunk_boundaries.fetch_add(1, Relaxed);
                         if context.trace {
@@ -1260,16 +1660,37 @@ impl Service {
                             .await?;
                         }
                     }
+                    player.on_ground = geometry.as_ref().map_or(player.position[1] <= 64.01, |t| {
+                        t.grounded(player.position, player.crouching)
+                    });
+                    if corrected {
+                        teleport_id = teleport_id
+                            .checked_add(1)
+                            .ok_or_else(|| invalid("teleport IDs exhausted"))?;
+                        player.pending_teleport = Some((teleport_id, now + player::ACK_TIMEOUT));
+                        deadline(
+                            5,
+                            connection.outbound.send(&play::position(
+                                teleport_id,
+                                player.position,
+                                player.rotation,
+                            )),
+                        )
+                        .await?;
+                    }
                     if let Some(game) = &game {
-                        player.on_ground = player.position[1] <= 64.01;
                         game.lock().unwrap().pose(player.replica().state, now);
                         replica_lease.pose(player.replica());
+                    }
+                    #[cfg(test)]
+                    if geometry.is_some() {
+                        crate::perf::COLLISION.record(collision_start.elapsed().as_micros() as u64);
                     }
                     self.metrics.movements.fetch_add(1, Relaxed);
                     publish_dirty = true;
                 }
                 play::Event::Flying(flying) => {
-                    if config.enabled {
+                    if arena {
                         if flying {
                             return Err(invalid("flight disabled in PvP"));
                         }
@@ -1296,7 +1717,7 @@ impl Service {
                     let crouching = flags & 32 != 0;
                     // The sprint key is input intent. Vanilla changes sprint state
                     // only through PlayerCommand, including after attack cancellation.
-                    let sprinting = if config.enabled {
+                    let sprinting = if arena {
                         player.sprinting
                     } else {
                         flags & 64 != 0
@@ -1333,13 +1754,11 @@ impl Service {
                     {
                         return Err(invalid("block action outside subscription or reach"));
                     }
-                    let state = material_state(terrain.override_at(pos).unwrap_or(
-                        if pos[1] < SURFACE && pos[1] >= MIN_Y {
-                            Material::Stone
-                        } else {
-                            Material::Air
-                        },
-                    ));
+                    let state = material_state(
+                        terrain
+                            .override_at(pos)
+                            .unwrap_or_else(|| self.base_block(pos)),
+                    );
                     deadline(5, async {
                         connection.outbound.send(&play::block_ack(sequence)).await?;
                         connection
@@ -1356,10 +1775,7 @@ impl Service {
 }
 
 fn material_state(material: Material) -> i32 {
-    match material {
-        Material::Air => 0,
-        Material::Stone => 1,
-    }
+    material.state()
 }
 
 async fn critical_message(

@@ -37,8 +37,11 @@ impl Server {
                 })
                 .unwrap();
         }
+        Self::serve_service(service, count, cloned).await
+    }
+    async fn serve_service(service: Arc<Service>, count: usize, cloned: bool) -> Self {
         let mut worlds = vec![service.default_world().unwrap()];
-        if cloned {
+        if cloned && service.imported_terrain().is_none() {
             service
                 .edit_world(worlds[0], [8, 62, 8], Material::Air)
                 .unwrap();
@@ -148,6 +151,9 @@ struct Observation {
     chunks: usize,
     unloads: usize,
     teleports: usize,
+    position: [f64; 3],
+    block_acks: Vec<i32>,
+    light_updates: usize,
 }
 struct Client {
     observation: Arc<Mutex<Observation>>,
@@ -170,7 +176,7 @@ impl Client {
     ) -> Self {
         let budget = ByteBudget::new(1024 * 1024);
         let mut connection = Connection::new(TcpStream::connect(address).await.unwrap(), budget);
-        connection.inbound.set_limit(CONTROL_LIMIT).unwrap();
+        connection.inbound.receive_server_packets().unwrap();
         connection.inbound.set_work_limit(8 * 1024 * 1024).unwrap();
         connection.enable_encryption(&[7; 16]).unwrap();
         connection.enable_compression(256).unwrap();
@@ -237,6 +243,7 @@ async fn pump(
     let mut ticks = 0u64;
     let mut pvp_mode = false;
     let combat = std::env::var("SMOLMC_PROBE_COMBAT").as_deref() == Ok("1");
+    let imported = std::env::var_os("SMOLMC_PROBE_IMPORT").is_some();
     let mut command_sent = false;
     let mut interval = tokio::time::interval(Duration::from_millis(50));
     interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
@@ -249,7 +256,7 @@ async fn pump(
                 ticks+=1;
                 let t=ticks as f64*0.05;
                 let mut e=login::Encoder::new(0x1f);
-                for v in [8.+2.*t.sin(),if combat {64.} else {65.},8.+2.*t.cos()] {e.raw(&v.to_be_bytes());}
+                for v in [8.+2.*t.sin(),if imported {if combat{200.}else{201.}} else if combat {64.} else {65.},(if imported{-40.}else{8.})+2.*t.cos()] {e.raw(&v.to_be_bytes());}
                 for v in [((ticks*3)%360) as f32,0.] {e.raw(&v.to_be_bytes());}e.byte(0);
                 connection.outbound.send(&e.finish()).await?;
                 if ticks.is_multiple_of(20) {connection.outbound.send(&[0x2b,if ticks.is_multiple_of(40) {0}else{32}]).await?;}
@@ -309,6 +316,9 @@ async fn pump(
                 let teleport_id = r.varint().unwrap();
                 observation.lock().unwrap().teleports += 1;
                 let position = r.take(24).unwrap();
+                observation.lock().unwrap().position = std::array::from_fn(|i| {
+                    f64::from_be_bytes(position[i * 8..i * 8 + 8].try_into().unwrap())
+                });
                 r.take(24).unwrap();
                 let rotation = r.take(8).unwrap();
                 assert_eq!(r.take(4).unwrap(), [0; 4]);
@@ -320,7 +330,7 @@ async fn pump(
                 connection.outbound.send(&ack).await?;
             }
             0x2e => {
-                assert!(packet.len() > 35000 && packet.len() < 40000);
+                assert!(packet.len() > 1000 && packet.len() < 256 * 1024);
                 stats.chunks += 1;
                 observation.lock().unwrap().chunks += 1;
             }
@@ -382,7 +392,7 @@ async fn pump(
                 }
                 assert!(!r.boolean().unwrap());
                 let mode = r.varint().unwrap();
-                assert!(mode == 1 || mode == 2);
+                assert!((0..=2).contains(&mode));
                 assert!(r.boolean().unwrap());
                 assert!(r.boolean().unwrap());
                 r.finish().unwrap();
@@ -555,7 +565,7 @@ async fn pump(
                 r.varint().unwrap();
                 r.string(64).unwrap();
                 r.take(8).unwrap();
-                assert_eq!(r.varint().unwrap(), 2);
+                assert!([0, 2].contains(&r.varint().unwrap()));
                 assert_eq!(r.varint().unwrap(), 0);
                 for _ in 0..3 {
                     assert!(!r.boolean().unwrap());
@@ -566,8 +576,35 @@ async fn pump(
                 r.finish().unwrap();
                 observation.lock().unwrap().respawns += 1;
             }
-            0x04 => {
+            0x05 => {
                 r.varint().unwrap();
+                r.take(8).unwrap();
+                let stage = r.byte().unwrap();
+                assert!(stage <= 9 || stage == 255);
+                r.finish().unwrap();
+            }
+            0x31 => {
+                r.varint().unwrap();
+                r.varint().unwrap();
+                for _ in 0..4 {
+                    r.array(4).unwrap();
+                }
+                for _ in 0..2 {
+                    let n = r.varint().unwrap();
+                    assert!((0..=26).contains(&n));
+                    for _ in 0..n {
+                        assert_eq!(r.array(2048).unwrap().len(), 2048);
+                    }
+                }
+                r.finish().unwrap();
+                observation.lock().unwrap().light_updates += 1;
+            }
+            0x04 => {
+                observation
+                    .lock()
+                    .unwrap()
+                    .block_acks
+                    .push(r.varint().unwrap());
                 r.finish().unwrap();
             }
             0x02 => {
@@ -589,10 +626,8 @@ async fn pump(
                 assert!(n == 0 || n == 1);
                 if n == 1 {
                     assert_eq!(r.string(64).unwrap(), "minecraft:base_attack_speed");
-                    assert_eq!(
-                        f64::from_be_bytes(r.take(8).unwrap().try_into().unwrap()),
-                        -2.4f32 as f64
-                    );
+                    let modifier = f64::from_be_bytes(r.take(8).unwrap().try_into().unwrap());
+                    assert!([(-2.4f32 as f64), (-2.8f32 as f64)].contains(&modifier));
                     assert_eq!(r.varint().unwrap(), 0);
                 }
                 r.finish().unwrap();
@@ -692,7 +727,38 @@ async fn active_play_resource_probe() {
             .parse()
             .unwrap();
         let pvp = std::env::var("SMOLMC_PROBE_PVP").as_deref() == Ok("1");
-        let server = Server::configured(worlds, false, pvp).await;
+        let server = if let Ok(path) = std::env::var("SMOLMC_PROBE_IMPORT") {
+            let service = Arc::new(
+                Service::import_instances(
+                    1,
+                    WorldProfile::builder(),
+                    std::path::Path::new(&path),
+                    ImportBounds {
+                        min: [-16, -64, -80],
+                        max: [48, 320, -16],
+                    },
+                    None,
+                    true,
+                )
+                .unwrap(),
+            );
+            let edits = (5..=11)
+                .flat_map(|x| (-43..=-37).map(move |z| ([x, 199, z], Material::Stone)))
+                .collect();
+            service
+                .edit_terrain(service.default_world().unwrap(), edits)
+                .await
+                .unwrap();
+            service
+                .configure_pvp(gameplay::Config {
+                    enabled: pvp,
+                    spawn: [8., if pvp { 200. } else { 201. }, -40.],
+                })
+                .unwrap();
+            Server::serve_service(service, worlds, true).await
+        } else {
+            Server::configured(worlds, false, pvp).await
+        };
         let bridge = std::env::var("SMOLMC_PROBE_BRIDGE_DIRECTORY")
             .ok()
             .map(|path| {
@@ -1020,7 +1086,9 @@ fn probe_stack(r: &mut Reader<'_>) -> i32 {
     }
     assert_eq!(count, 1);
     let id = r.varint().unwrap();
-    assert!(id == 1045 || id == 1050);
+    assert!(
+        id == 1045 || id == 1050 || id == 1047 || smolmc_world::STATES.iter().any(|s| s.item == id)
+    );
     assert_eq!(r.varint().unwrap(), 0);
     assert_eq!(r.varint().unwrap(), 0);
     id
@@ -1237,4 +1305,336 @@ async fn pvp_landing_before_next_position_uses_grounded_knockback_on_wire() {
     let (s, n) = server.stop().await;
     assert_eq!(s.active_replicas, 0);
     assert_eq!(n.protocol_errors, 0);
+}
+fn terrain_fixture() -> Arc<smolmc_world::terrain::ImportedTerrain> {
+    use smolmc_world::terrain::*;
+    use std::collections::BTreeMap;
+    let bounds = ImportBounds {
+        min: [-16, 48, -16],
+        max: [48, 96, 48],
+    };
+    let mut chunks = BTreeMap::new();
+    for pos in bounds.chunks() {
+        let mut sections: Vec<Option<Section>> = (0..24).map(|_| None).collect();
+        sections[7] = Some(Section {
+            blocks: Packed::singleton(1, 4096),
+            biomes: Packed::singleton(0, 64),
+            sky: None,
+            block_light: None,
+        });
+        chunks.insert(
+            pos,
+            Arc::new(TerrainChunk {
+                pos,
+                sections: sections.into_boxed_slice(),
+                light_sections: BTreeMap::new(),
+                bytes: 512,
+            }),
+        );
+    }
+    let mut base = ImportedTerrain {
+        bounds,
+        chunks,
+        bytes: 8192,
+        input_bytes: 0,
+        clipped_blocks: 0,
+        source_files: vec![],
+        removed_palette_entries: BTreeMap::new(),
+    };
+    smolmc_world::lighting::relight_base(&mut base).unwrap();
+    Arc::new(base)
+}
+#[tokio::test]
+async fn terrain_encrypted_build_collision_isolation_reset_and_readonly() {
+    let service = Arc::new(
+        Service::with_terrain_instances(
+            1,
+            WorldProfile::builder(),
+            terrain_fixture(),
+            [8., 64., 8.],
+        )
+        .unwrap(),
+    );
+    service
+        .configure_pvp(gameplay::Config {
+            enabled: true,
+            spawn: [8., 64., 8.],
+        })
+        .unwrap();
+    let server = Server::serve_service(service, 2, false).await;
+    let a = Client::stationary(server.address).await;
+    let isolated = Client::stationary(server.address).await;
+    let b = Client::stationary(server.address).await;
+    assert_eq!(a.observe().inventory[37], 1047);
+    a.send(vec![0x36, 0, 2]).await;
+    let mut place = login::Encoder::new(0x42);
+    place.varint(0);
+    place.raw(&play::pack_block_pos([10, 63, 8]).to_be_bytes());
+    place.varint(1);
+    for v in [0.5f32, 1., 0.5] {
+        place.raw(&v.to_be_bytes());
+    }
+    place.boolean(false);
+    place.boolean(false);
+    place.varint(1);
+    a.send(place.finish()).await;
+    a.wait(|o| o.block_acks.contains(&1)).await;
+    b.wait(|o| o.blocks.get(&[10, 64, 8]) == Some(&1)).await;
+    assert!(!isolated.observe().blocks.contains_key(&[10, 64, 8]));
+    assert_eq!(
+        server
+            .service
+            .read_blocks(server.worlds[0], &[[10, 64, 8]])
+            .unwrap(),
+        vec![Material::Stone]
+    );
+    let teleports = a.observe().teleports;
+    let mut movement = login::Encoder::new(0x1e);
+    for v in [11f64, 64., 8.] {
+        movement.raw(&v.to_be_bytes());
+    }
+    movement.byte(1);
+    a.send(movement.finish()).await;
+    a.wait(|o| o.teleports > teleports).await;
+    assert!(a.observe().position[0] <= 9.70001);
+    a.send(vec![0x36, 0, 1]).await;
+    let mut dig = login::Encoder::new(0x29);
+    dig.varint(0);
+    dig.raw(&play::pack_block_pos([10, 64, 8]).to_be_bytes());
+    dig.byte(1);
+    dig.varint(2);
+    a.send(dig.finish()).await;
+    a.wait(|o| o.block_acks.contains(&2)).await;
+    tokio::time::sleep(Duration::from_millis(450)).await;
+    let mut finish = login::Encoder::new(0x29);
+    finish.varint(3);
+    finish.raw(&play::pack_block_pos([10, 64, 8]).to_be_bytes());
+    finish.byte(1);
+    finish.varint(3);
+    a.send(finish.finish()).await;
+    b.wait(|o| o.blocks.get(&[10, 64, 8]) == Some(&0)).await;
+
+    a.send(vec![0x36, 0, 1]).await;
+    for sequence in 10..55 {
+        let mut dig = login::Encoder::new(0x29);
+        dig.varint(0);
+        dig.raw(&play::pack_block_pos([10, 63, 8]).to_be_bytes());
+        dig.byte(1);
+        dig.varint(sequence);
+        a.sequence(vec![vec![0x2e], dig.finish()]).await;
+        tokio::time::sleep(Duration::from_millis(50)).await;
+    }
+    a.wait(|o| o.block_acks.contains(&54)).await;
+    let teleports = a.observe().teleports;
+    let mut fall = login::Encoder::new(0x1e);
+    for v in [9f64, -61., 8.] {
+        fall.raw(&v.to_be_bytes());
+    }
+    fall.byte(0);
+    a.send(fall.finish()).await;
+    a.wait(|o| o.teleports > teleports).await;
+    assert_eq!(a.observe().position, [8., 64., 8.]);
+    tokio::time::sleep(Duration::from_millis(50)).await;
+    let ro = server
+        .service
+        .create_world_with_profile(WorldProfile::read_only())
+        .unwrap();
+    server.service.switch_player(1, ro).unwrap();
+    a.wait(|o| o.teleports > teleports + 1).await;
+    let mut dig = login::Encoder::new(0x29);
+    dig.varint(0);
+    dig.raw(&play::pack_block_pos([9, 63, 8]).to_be_bytes());
+    dig.byte(1);
+    dig.varint(3);
+    a.send(dig.finish()).await;
+    a.wait(|o| o.block_acks.contains(&3)).await;
+    assert_eq!(
+        server.service.read_blocks(ro, &[[9, 63, 8]]).unwrap(),
+        vec![Material::Stone]
+    );
+    a.stop().await;
+    b.stop().await;
+    isolated.stop().await;
+    tokio::time::timeout(Duration::from_secs(5), async {
+        while !server.service.worlds.empty() {
+            tokio::task::yield_now().await;
+        }
+    })
+    .await
+    .unwrap();
+    server
+        .service
+        .edit_terrain(server.worlds[1], vec![([8, 64, 8], Material::Stone)])
+        .await
+        .unwrap();
+    let reconnect = Client::stationary(server.address).await;
+    assert_eq!(reconnect.observe().position, [8.5, 65., 8.5]);
+    reconnect.stop().await;
+    tokio::time::timeout(Duration::from_secs(5), async {
+        while !server.service.worlds.empty() {
+            tokio::task::yield_now().await;
+        }
+    })
+    .await
+    .unwrap();
+    let old = server.worlds[0];
+    let new = server.service.reset_world(old).unwrap();
+    assert_eq!(
+        server.service.read_blocks(new, &[[10, 64, 8]]).unwrap(),
+        vec![Material::Air]
+    );
+    assert!(server.service.read_blocks(old, &[[10, 64, 8]]).is_err());
+    println!("terrain_timing={}", crate::perf::snapshot());
+    let (s, n) = server.stop().await;
+    assert_eq!(s.active_replicas, 0);
+    assert_eq!(n.active, 0);
+    assert_eq!(n.frame_bytes_retained, 0);
+}
+#[tokio::test]
+async fn terrain_cow_lighting_atomic_edits_reset_pending_and_bounded_failure() {
+    let service = Service::with_terrain_instances(
+        1,
+        WorldProfile::builder(),
+        terrain_fixture(),
+        [8., 64., 8.],
+    )
+    .unwrap();
+    let a = service.default_world().unwrap();
+    let b = service.clone_world(a).unwrap();
+    service
+        .edit_terrain(a, vec![([0, 64, 0], Material::Stone)])
+        .await
+        .unwrap();
+    assert_eq!(
+        service.read_blocks(a, &[[0, 64, 0]]).unwrap(),
+        vec![Material::Stone]
+    );
+    assert_eq!(
+        service.read_blocks(b, &[[0, 64, 0]]).unwrap(),
+        vec![Material::Air]
+    );
+    let original = service.worlds.terrain_snapshot(a).unwrap();
+    assert!(original.light_sections().count() > 0);
+    let clone = service.clone_world(a).unwrap();
+    assert!(original.same_snapshot(&service.worlds.terrain_snapshot(clone).unwrap()));
+    service
+        .edit_terrain(clone, vec![([0, 64, 0], Material::Air)])
+        .await
+        .unwrap();
+    assert!(original.same_snapshot(&service.worlds.terrain_snapshot(a).unwrap()));
+    let snapshot = smolmc_world::collision::TerrainSnapshot {
+        base: Arc::clone(service.imported_terrain().unwrap()),
+        overlay: service.worlds.terrain_snapshot(a).unwrap(),
+    };
+    assert_eq!(snapshot.safe_spawn([0.5, 64., 0.5]).unwrap()[1], 65.);
+    drop(snapshot);
+    let current = service.reset_world(clone).unwrap();
+    assert_eq!(
+        service
+            .worlds
+            .terrain_snapshot(current)
+            .unwrap()
+            .light_sections()
+            .count(),
+        0
+    );
+    let (tx, rx) = oneshot::channel();
+    service
+        .worlds
+        .submit_terrain(
+            b,
+            vec![([1, 64, 1], Material::Stone)],
+            false,
+            None,
+            crate::worlds::lighting::Reply::Control(tx),
+        )
+        .unwrap();
+    let fresh = service.reset_world(b).unwrap();
+    assert!(rx.await.unwrap().is_err());
+    assert_eq!(
+        service.read_blocks(fresh, &[[1, 64, 1]]).unwrap(),
+        vec![Material::Air]
+    );
+    let snapshot = service.worlds.terrain_snapshot(a).unwrap();
+    assert!(
+        service
+            .edit_terrain(a, vec![([10000, 64, 0], Material::Stone)])
+            .await
+            .is_err()
+    );
+    assert!(snapshot.same_snapshot(&service.worlds.terrain_snapshot(a).unwrap()));
+    service.destroy_world(a).unwrap();
+    service.destroy_world(current).unwrap();
+    service.destroy_world(fresh).unwrap();
+    drop(original);
+    drop(snapshot);
+    assert_eq!(service.worlds.memory().charged_bytes, 0);
+    service.shutdown().await.unwrap();
+}
+#[tokio::test]
+async fn imported_falling_contact_does_not_become_sweep_before_landing() {
+    let now = Instant::now();
+    let mut g = gameplay::State::new(now, [8., 65., 8.]);
+    g.terrain = Some(smolmc_world::collision::TerrainSnapshot {
+        base: terrain_fixture(),
+        overlay: Default::default(),
+    });
+    g.fall_distance = 0.75;
+    g.velocity = [0., -0.4, 0.];
+    let pose = presence::EntitySnapshot {
+        position: [8., 64.25, 8.],
+        rotation: [0.; 2],
+        on_ground: false,
+        crouching: false,
+        sprinting: false,
+    };
+    g.pose(pose, now);
+    g.fall_distance = 0.75;
+    g.advance_motion(now + Duration::from_millis(50));
+    assert!(!g.motion_state().2);
+    assert_eq!(
+        g.classify(pose, now + Duration::from_secs(1)),
+        gameplay::AttackKind::Critical
+    );
+}
+#[tokio::test]
+#[ignore = "requires compiled Java SDK; imported terrain control integration"]
+async fn terrain_java_sdk_controls_imported_worlds() {
+    let service = Arc::new(
+        Service::with_terrain_instances(
+            1,
+            WorldProfile::builder(),
+            terrain_fixture(),
+            [8., 64., 8.],
+        )
+        .unwrap(),
+    );
+    let directory = std::env::temp_dir().join(format!("smc-terrain-java-{}", std::process::id()));
+    let bridge = crate::java_bridge_fixture::Bridge::start(
+        Arc::clone(&service),
+        &directory,
+        crate::java_bridge_fixture::Access::Control,
+    )
+    .unwrap();
+    let mut child = std::process::Command::new("java")
+        .arg("-ea")
+        .arg("-cp")
+        .arg(std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../target/java/classes"))
+        .arg("dev.smolmc.TerrainIntegration")
+        .arg(&directory)
+        .spawn()
+        .unwrap();
+    let code = timeout(Duration::from_secs(20), async {
+        loop {
+            if let Some(code) = child.try_wait().unwrap() {
+                break code;
+            }
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }
+    })
+    .await
+    .unwrap();
+    assert!(code.success());
+    bridge.shutdown().await.unwrap();
+    service.shutdown().await.unwrap();
 }

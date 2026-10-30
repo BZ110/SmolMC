@@ -32,7 +32,7 @@ impl OverlayBudget {
             peak_charged_bytes: self.peak.load(Relaxed),
         }
     }
-    fn reserve(self: &Arc<Self>, bytes: usize) -> Result<Charge, WorldError> {
+    pub(crate) fn reserve(self: &Arc<Self>, bytes: usize) -> Result<Charge, WorldError> {
         let old = self
             .used
             .try_update(Relaxed, Relaxed, |n| {
@@ -55,7 +55,7 @@ pub struct OverlayMemory {
     pub peak_charged_bytes: usize,
 }
 #[derive(Debug)]
-struct Charge {
+pub(crate) struct Charge {
     budget: Arc<OverlayBudget>,
     bytes: usize,
 }
@@ -67,7 +67,7 @@ impl Drop for Charge {
 #[derive(Debug)]
 struct EditedChunk {
     pos: ChunkPos,
-    entries: Box<[(u16, Material)]>,
+    entries: Box<[(u32, Material)]>,
     charge: Charge,
 }
 #[derive(Debug)]
@@ -80,27 +80,40 @@ struct Index {
 #[derive(Clone, Debug, Default)]
 pub struct InstanceOverlay {
     index: Option<Arc<Index>>,
+    lights: Option<Arc<LightIndex>>,
 }
+#[derive(Debug)]
+struct LightSection {
+    data: Arc<[u8]>,
+    _charge: Charge,
+}
+#[derive(Debug)]
+struct LightIndex {
+    entries: Box<[(crate::lighting::LightKey, Arc<LightSection>)]>,
+    bytes: usize,
+    _charge: Charge,
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum InstanceError {
     CapacityExceeded,
 }
-fn local(pos: [i32; 3]) -> (ChunkPos, u16) {
+fn local(pos: [i32; 3]) -> (ChunkPos, u32) {
     (
         ChunkPos {
             x: pos[0].div_euclid(16),
             z: pos[2].div_euclid(16),
         },
-        (((pos[1] - crate::MIN_Y) as u16) << 8)
-            | ((pos[2].rem_euclid(16) as u16) << 4)
-            | pos[0].rem_euclid(16) as u16,
+        (((pos[1] - crate::MIN_Y) as u32) << 8)
+            | ((pos[2].rem_euclid(16) as u32) << 4)
+            | pos[0].rem_euclid(16) as u32,
     )
 }
-fn absolute(chunk: ChunkPos, key: u16) -> [i32; 3] {
+fn absolute(chunk: ChunkPos, key: u32) -> [i32; 3] {
     [
-        chunk.x * 16 + i32::from(key & 15),
-        crate::MIN_Y + i32::from(key >> 8),
-        chunk.z * 16 + i32::from((key >> 4) & 15),
+        chunk.x * 16 + (key & 15) as i32,
+        crate::MIN_Y + (key >> 8) as i32,
+        chunk.z * 16 + ((key >> 4) & 15) as i32,
     ]
 }
 impl InstanceOverlay {
@@ -108,6 +121,14 @@ impl InstanceOverlay {
         Self::default()
     }
     pub fn same_snapshot(&self, other: &Self) -> bool {
+        self.same_blocks(other)
+            && match (&self.lights, &other.lights) {
+                (None, None) => true,
+                (Some(a), Some(b)) => Arc::ptr_eq(a, b),
+                _ => false,
+            }
+    }
+    pub fn same_blocks(&self, other: &Self) -> bool {
         match (&self.index, &other.index) {
             (None, None) => true,
             (Some(a), Some(b)) => Arc::ptr_eq(a, b),
@@ -130,7 +151,7 @@ impl InstanceOverlay {
             .map(|i| &self.chunks()[i])
     }
     pub fn override_at(&self, pos: [i32; 3]) -> Option<Material> {
-        if !(crate::MIN_Y..crate::SURFACE - 1).contains(&pos[1]) {
+        if !(crate::MIN_Y..crate::MIN_Y + crate::HEIGHT).contains(&pos[1]) {
             return None;
         }
         let (chunk, key) = local(pos);
@@ -165,6 +186,7 @@ impl InstanceOverlay {
     }
     pub fn logical_bytes(&self) -> usize {
         self.index.as_ref().map_or(0, |i| i.logical_bytes)
+            + self.lights.as_ref().map_or(0, |l| l.bytes)
     }
     /// Transactional: all positions must be validated by the world owner first.
     /// None removes an override; duplicates apply in input order (last wins).
@@ -220,7 +242,7 @@ impl InstanceOverlay {
             }
             let bytes = ARC_HEADER
                 + size_of::<EditedChunk>()
-                + entries.len() * size_of::<(u16, Material)>();
+                + entries.len() * size_of::<(u32, Material)>();
             let chunk = Arc::new(EditedChunk {
                 pos,
                 entries: entries.into_boxed_slice(),
@@ -232,7 +254,10 @@ impl InstanceOverlay {
             }
         }
         if chunks.is_empty() {
-            return Ok(Self::new());
+            return Ok(Self {
+                index: None,
+                lights: self.lights.clone(),
+            });
         }
         if chunks.len() == self.chunks().len()
             && chunks
@@ -253,6 +278,7 @@ impl InstanceOverlay {
             return Err(WorldError::WorldBudgetExceeded);
         }
         Ok(Self {
+            lights: self.lights.clone(),
             index: Some(Arc::new(Index {
                 chunks: chunks.into_boxed_slice(),
                 count,
@@ -261,9 +287,82 @@ impl InstanceOverlay {
             })),
         })
     }
+    pub fn sky_section(&self, key: crate::lighting::LightKey) -> Option<&[u8]> {
+        let l = self.lights.as_ref()?;
+        l.entries
+            .binary_search_by_key(&key, |e| e.0)
+            .ok()
+            .map(|i| l.entries[i].1.data.as_ref())
+    }
+    pub fn light_sections(&self) -> impl Iterator<Item = (crate::lighting::LightKey, &[u8])> {
+        self.lights
+            .iter()
+            .flat_map(|l| l.entries.iter().map(|(key, s)| (*key, s.data.as_ref())))
+    }
+    pub(crate) fn with_lighting(
+        &self,
+        base: &crate::terrain::ImportedTerrain,
+        patch: crate::lighting::LightPatch,
+        limits: WorldLimits,
+        budget: &Arc<OverlayBudget>,
+    ) -> Result<Self, WorldError> {
+        let mut entries = self
+            .lights
+            .as_ref()
+            .map_or_else(Vec::new, |l| l.entries.to_vec());
+        for (key, data) in patch {
+            let base = base
+                .chunks
+                .get(&key.0)
+                .and_then(|c| c.light_sections.get(&key.1))
+                .and_then(|l| l.0.as_ref());
+            let found = entries.binary_search_by_key(&key, |e| e.0);
+            if base.map(AsRef::as_ref) == Some(data.as_ref())
+                || (base.is_none() && data.iter().all(|b| *b == 255))
+            {
+                if let Ok(i) = found {
+                    entries.remove(i);
+                }
+                continue;
+            }
+            if found.is_ok_and(|i| entries[i].1.data.as_ref() == data.as_ref()) {
+                continue;
+            }
+            let bytes = ARC_HEADER + size_of::<LightSection>() + data.len();
+            let node = Arc::new(LightSection {
+                data,
+                _charge: budget.reserve(bytes)?,
+            });
+            match found {
+                Ok(i) => entries[i].1 = node,
+                Err(i) => entries.insert(i, (key, node)),
+            }
+        }
+        let lights = if entries.is_empty() {
+            None
+        } else {
+            let root = ARC_HEADER
+                + size_of::<LightIndex>()
+                + entries.len() * size_of::<(crate::lighting::LightKey, Arc<LightSection>)>();
+            let bytes = root + entries.iter().map(|(_, s)| s._charge.bytes).sum::<usize>();
+            if bytes + self.index.as_ref().map_or(0, |i| i.logical_bytes) > limits.max_overlay_bytes
+            {
+                return Err(WorldError::WorldBudgetExceeded);
+            }
+            Some(Arc::new(LightIndex {
+                entries: entries.into_boxed_slice(),
+                bytes,
+                _charge: budget.reserve(root)?,
+            }))
+        };
+        Ok(Self {
+            index: self.index.clone(),
+            lights,
+        })
+    }
     // Legacy standalone helper; managed worlds always use their shared budget.
     pub fn set_block(&mut self, pos: [i32; 3], m: Material) -> Result<(), InstanceError> {
-        if !(crate::MIN_Y..crate::SURFACE - 1).contains(&pos[1]) {
+        if !(crate::MIN_Y..crate::MIN_Y + crate::HEIGHT).contains(&pos[1]) {
             return Err(InstanceError::CapacityExceeded);
         }
         let budget = self.index.as_ref().map_or_else(

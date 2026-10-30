@@ -1,6 +1,6 @@
 # SmolMC
 
-Rust Minecraft Java Edition **26.3 / protocol 777**, implemented through **revised M3 PvP Gameplay Foundation**:
+Rust Minecraft Java Edition **26.3 / protocol 777**, implemented through **M4A imported arena terrain and interactions**:
 isolated worlds sharing immutable stone/registries, sparse COW snapshots, cheap
 clones/reset, profiles/budgets and event-driven idle lifecycle. See the
 [M2B engineering report](docs/M2B_ENGINEERING_REPORT.md) for acceptance and measurements.
@@ -8,18 +8,28 @@ clones/reset, profiles/budgets and event-driven idle lifecycle. See the
 M2A was accepted after user-reported real stock-client verification. M2B retains
 that protocol path and adds automated cloned-world isolation checks; no new stock
 rendering or real-account capacity claim. Player block interactions remain
-read-only; trusted Rust controls can edit buried Air/Stone blocks only.
+read-only on the legacy virtual-stone path; trusted controls retain buried
+Air/Stone edits there. Imported maps support broader terrain edits through the
+explicit `build` profile and typed controls.
 With `--pvp on`, the authoritative arena kit supports inventory/hotbar/F swaps,
 sword combat, health, death and respawn. Other survival actions and signed commands
-remain unsupported; see the M3 report for exact limits. The optional bridge supports bounded unsigned
+remain unsupported; see the M3/M4A reports for exact limits. The optional bridge supports bounded unsigned
 literal commands. No signed-player-chat verification is claimed.
 
-**Revised M3 is implemented and user-verified with two stock 26.3 clients.**
+**M4A is implemented and user-accepted following real 26.3 client tests.**
+Bounded modern Anvil import, shared immutable terrain/COW instances, supported
+collisions, placement and held mining are available with explicit imported-map
+profiles. See the [M4A report](docs/M4A_ENGINEERING_REPORT.md),
+[exact supported subset and limits](docs/M4A_TERRAIN_CONTRACT.md),
+[protocol evidence](docs/M4A_PROTOCOL_EVIDENCE.md) and
+[security review](docs/M4A_SECURITY_REVIEW.md). Full survival remains deferred.
+
+Revised M3 was previously user-verified with two stock 26.3 clients.
 The accepted knockback profile follows 1.19.4-based behavior with the documented
 flat-arena contact policy; wire protocol remains 777.
 See the [M3 engineering report](docs/M3_ENGINEERING_REPORT.md),
 [protocol/gameplay evidence](docs/M3_PROTOCOL_EVIDENCE.md) and
-[security review](docs/M3_SECURITY_REVIEW.md). Stop after this revised milestone.
+[security review](docs/M3_SECURITY_REVIEW.md). M4A preserves this combat profile; stop after M4A.
 See [AGENTS.md](AGENTS.md), [the roadmap](docs/13_ROADMAP.md),
 [ADR-006](decisions/ADR-006-m2b-shared-cow-overlays-and-budgets.md) and the
 [accepted M2A checkpoint/report](docs/M2A_ENGINEERING_REPORT.md).
@@ -28,7 +38,7 @@ A focused replication optimization followed M2B: bounded write batching and wake
 allocation reductions lower CPU while preserving update rates and isolation.
 See [short before/after measurements and limits](docs/REPLICATION_CPU_REPORT.md)
 and [ADR-007](decisions/ADR-007-bounded-replication-write-batches.md). These optimizations
-remain intact through M2C.
+remain intact through M4A.
 
 ## Build and run
 
@@ -59,6 +69,7 @@ credential/token input on the server command line.
 target/release/smolmc --bind 127.0.0.1:25565 --trace-connections
 target/release/smolmc --instances 2 --world-profile read-only --bind 127.0.0.1:25565
 target/release/smolmc --pvp on --arena-spawn 8,64,8 --bind 127.0.0.1:25566
+target/release/smolmc --import-world '/path/to/world' --import-bounds '-16,-64,-80,48,320,-16' --world-profile build --pvp on --bind 127.0.0.1:25567
 target/release/smolmc --help
 ```
 
@@ -70,8 +81,9 @@ never keys, tokens or payloads. Keep tracing off for ordinary load measurements.
 
 ## Optional Java SDK
 
-Java **17+**, SDK **0.2.0**, Unix socket schema **1.1**; old 0.1.0/1.0 clients retain
-their operation/event subset. The extension adds read-only combat snapshots/events. Bridge-off starts no JVM,
+Java **17+**, SDK **0.3.0**, Unix socket schema **1.2**; old 0.1.0/1.0 and 0.2.0/1.1
+clients retain their operation/event subset. Extensions add combat observations,
+configured-template discovery and typed supported terrain reads/atomic edits. Bridge-off starts no JVM,
 listener, event bus or per-player Java queue. Enabling the bridge adds no Rust
 thread or world tick. Java remains a separate process; its memory is reported
 separately (not hidden in Rust RSS). No Bukkit/Paper plugin compatibility or plugin
@@ -102,7 +114,7 @@ when empty; buried edits and fixed spawn transfers retain existing M2B limits.
 | `network` | Admission/recovery, persistent read/write halves, framing/transforms, byte budgets and supervision |
 | `auth` | Provider-backed challenge cryptography and Mojang HTTPS session verification |
 | `world` | Materials/geometry plus explicit template/instance identities, bounded edits and lifecycle |
-| `chunks` | Shared stone chunk body and coordinate serialization |
+| `chunks` | Shared stone/imported chunk packets, palettes, heightmaps and light updates |
 | `sessions` | Protocol phases, identity/world leases, trusted lifecycle controls, shared terrain, per-world replication and switching |
 | `bridge` | Optional versioned authenticated Unix IPC, bounded control requests and events |
 | `server` | Thin assembly root, runtime limits, CLI and shutdown |
@@ -120,8 +132,9 @@ general physics/mob/persistence capabilities fail explicitly. PvP is a separate
 startup opt-in; the optional local Java control bridge remains independent. Parked worlds own no
 terrain watch channel; terrain watches are created only while occupied. An authenticated local control listener and literal commands are available only
 with the explicitly enabled bridge.
-Edits are ephemeral Air/Stone overrides only at `-64 <= y < 63`, at most 65,536 per
-world, preserving the intact roof/heightmaps/lighting. Surface editing is unsupported.
+Legacy virtual-stone edits remain ephemeral buried Air/Stone overrides only.
+Imported edits cover their selected volume, with supported states and atomic light
+updates. Both retain sparse COW and per-world/shared budgets. No persistence.
 
 | Resource | Current default/policy |
 |---|---|
@@ -136,14 +149,14 @@ world, preserving the intact roof/heightmaps/lighting. Surface editing is unsupp
 | Runtime | One async thread; at most 4 blocking threads, retired after 2 seconds idle |
 | Deadlines | Handshake/status 5s; Login 15s; Configuration 20s; Play writes 5s; teleport/batch ACK 10s |
 | Persistent Play | Keepalive after 12s, response within 20s; at most 256 inbound packets/s/session |
-| Terrain streaming | Radius 2 (25 slots); one batch in flight, at most 4 chunks/batch; shared 35,956-byte body, 35,965-byte scratch/Play session |
+| Terrain streaming | Radius 2 (25 slots), one batch in flight, ≤4 chunks/batch; shared encoded imported packets; temporary scratch released after imported view completes |
 | Presence | At most 511 peers/viewer; latest snapshots/rosters, 50ms minimum dirty publish/flush |
 | Chat | System relay only; 3-message sender burst, refill 1/s; 8192 deliveries/s aggregate; 32-message viewer queue |
 | Directory | 2048 command slots; coalesced update notices, reserved generation-checked leave |
 | Worlds | 4096 live worlds, 16 template descriptors; no per-world task/timer/thread |
-| World profile | Up to 512 players, 65,536 buried overrides, 4096 modified chunks and 1 MiB logical overlay charges/world |
+| World profile | Up to 512 players, 65,536 overrides, 4096 modified chunks and 1 MiB logical block+light overlay charges/world |
 | Retained overlay snapshots | 64 MiB shared charge budget, including pinned old snapshots; charges are payload/header policy accounting, not RSS |
-| Edits | At most 4096 operations per transactional batch; unchanged chunks/root snapshots shared by clones |
+| Edits | ≤4096 operations/transaction; unchanged block/light snapshots shared by clones; imported lighting uses one bounded shared worker |
 | Session service | Fixed HTTPS origin; connect 3s/request 8s; response 64 KiB; no redirects/proxy routing |
 
 Admission can be configured with `--max-connections N` (up to 4096),
@@ -156,11 +169,14 @@ Only the acknowledged **minecraft:core:26.3** known-pack path is supported.
 Declining it produces a readable Configuration rejection. The client supplies
 its own built-in registry data. The repository contains identifier inventories
 only: **32 registries, 432 entries, 773 named tags**. Tag memberships are explicitly
-empty for this bootstrap; the narrow PvP rules identify the two supported swords
-explicitly. General vanilla tag/survival semantics are not implemented.
+empty for the legacy bootstrap; imported clients receive four supported mining-tag
+subsets. Narrow PvP rules explicitly identify supported swords/tools. General vanilla tag/survival semantics are not implemented.
 No Mojang registry/tag JSON/NBT assets or implementation bodies are bundled.
 
 ## Verification and reports
+
+- [M4A: imported maps, collisions, held mining, performance and rollback](docs/M4A_ENGINEERING_REPORT.md)
+- [M4A supported subset and bounds](docs/M4A_TERRAIN_CONTRACT.md)
 
 - [Revised M3: authoritative arena combat, client acceptance, resources, limits and rollback](docs/M3_ENGINEERING_REPORT.md)
 
