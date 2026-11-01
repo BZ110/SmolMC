@@ -10,6 +10,7 @@ pub(crate) enum Reply {
         wake: Arc<Notify>,
         positions: Vec<[i32; 3]>,
         sequence: i32,
+        completion: Option<crate::replication::items::Completion>,
     },
     Control(oneshot::Sender<Result<(), WorldError>>),
 }
@@ -100,7 +101,11 @@ impl Worlds {
                                 wake,
                                 positions,
                                 sequence,
+                                completion,
                             } => {
+                                if let Some(completion) = completion {
+                                    completion.finish(result.is_ok());
+                                }
                                 let mut packets = Vec::new();
                                 if let Ok(materials) = worlds.read(handle, &positions) {
                                     for (pos, material) in positions.into_iter().zip(materials) {
@@ -138,7 +143,7 @@ impl Worlds {
         handle: WorldHandle,
         edits: Vec<([i32; 3], Material)>,
         client: bool,
-        expected: Option<Material>,
+        expected: Option<Vec<Material>>,
         reply: Reply,
     ) -> Result<(), WorldError> {
         let sender = self.light_sender();
@@ -157,11 +162,13 @@ impl Worlds {
             .clone()
             .ok_or(WorldError::UnsupportedFeature)?;
         if let Some(expected) = expected
-            && (edits.len() != 1
-                || i.overlay
-                    .override_at(edits[0].0)
-                    .unwrap_or_else(|| i.template.material(edits[0].0))
-                    != expected)
+            && (edits.len() != expected.len()
+                || edits.iter().zip(expected).any(|((pos, _), expected)| {
+                    i.overlay
+                        .override_at(*pos)
+                        .unwrap_or_else(|| i.template.material(*pos))
+                        != expected
+                }))
         {
             return Err(WorldError::Busy);
         }

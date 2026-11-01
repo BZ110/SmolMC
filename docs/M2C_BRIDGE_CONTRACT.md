@@ -1,5 +1,22 @@
 # M2C bridge contract with revised M3 extension
 
+## M4B compatible extension — schema 1.3 / SDK 0.4.0
+
+Java 17+ remains optional. Operation **24**, available with observe or control,
+accepts entity i32 + UUID (16 bytes), checked against the current player session.
+The immutable inventory reply is revision i32, selected u8, slot count u16 (=46),
+46 stacks then cursor, armor f32 and toughness f32. Each stack is item ID i32,
+count u8, damage u16 and maximum damage u16. SDK types are `ItemStack` and
+`InventoryState`; `players().inventory(handle)` is asynchronous and read-only.
+No Java call enters attack/mining/pickup decisions. The existing bounded frame,
+work and pending-request budgets apply. Missing/stale/disabled sessions fail.
+
+Schema 1.0 / 1.1 / 1.2 negotiations still advertise SDK 0.1.0 / 0.2.0 / 0.3.0
+respectively, and retain their operation/event subsets. Operation 24 requires 1.3.
+No new veto events or arbitrary inventory mutation API are implied. The historical
+sections below retain their version-specific contracts.
+
+
 Design decision, implemented scope: optional local Unix IPC, schema **1.1**,
 SDK semantic version **0.2.0**, Java **17+** source/bytecode. Schema 1.0 / SDK
 0.1.0 peers remain supported on their original operation/event subset. macOS and Linux.

@@ -125,7 +125,34 @@ Rust/Java checks, short measurements and clean Linux evidence accompany the fina
 checkpoint `m4a-validated`. Subsequent user clarification added narrow sword/tool
 mining duration; drops/durability remain deferred. Stop after M4A.
 
-## Deferred M4B and broader M4 — optional heavy subsystems
+## M4B — Items, Drops, Durability & Armor (complete, user-accepted and validated)
+
+2026-10-30 explicit user authorization, after accepted M4A was committed/tagged.
+Checkpoint `m4b-before` preserves `d6371cc` (`m4a-validated`), with a clean tree.
+Rust owns bounded world-local dropped items, authoritative counted/component
+stacks, supported deterministic block loot, tool/weapon durability, armor slots
+and mitigation. Preserve the accepted M3 knockback equations and landing policy,
+M4A terrain/mining reconciliation, COW/isolation, bounded queues and optional Java.
+Keep the default arena kit/reset policy; item gameplay is explicitly configured.
+
+**Gate:** two actual unmodified 26.3 clients mine/see/collect/drop/merge items,
+experience durability/breakage, equip visible armor and fight with mitigation;
+isolation/reset/death policies and accepted knockback remain correct. Automated
+adversarial/lifecycle/combat/terrain tests, independent actual vanilla codecs and
+mechanics, Rust/Java/Linux checks, short M4A-matched resource measurements and an
+engineering/security report supplement mandatory real-client acceptance.
+These gates passed; the user accepted the final interaction fixes with “Seems good.”
+See the [engineering report](M4B_ENGINEERING_REPORT.md), platform/source manifests
+and user-reported acceptance evidence. Final checkpoint: `m4b-validated`.
+
+**Deferred:** enchanting/Fortune/Silk Touch/Unbreaking/Mending, crafting/furnaces,
+containers, shields, effects, custom attributes, mobs, hunger/regen, persistence,
+general physics/fluids/redstone, full survival, Bukkit/Paper and M5. Deterministic
+supported loot and static-terrain item physics form a documented bounded subset.
+No new external dependency or lockfile change. Roll back in an isolated checkout at
+`m4b-before`; ephemeral state needs no persistence migration. Stop after M4B.
+
+## Deferred broader M4 — optional heavy subsystems
 
 Only the narrow inventory/player-combat/death dependencies above move into revised
 M3. Full survival inventory/crafting/containers/enchanting, general block interactions beyond M4A,
@@ -135,7 +162,7 @@ and arbitrary import/export beyond the bounded M4A subset remain deferred.
 ## Deferred M5 — scaling and compatibility
 
 Regionization/parallel heavy simulation, additional client versions and Bukkit/
-Paper wrappers remain future scope. Only M4A is authorized; no subsequent milestone is authorized.
+Paper wrappers remain future scope. M4B is complete; no subsequent milestone is authorized.
 
 ## Why stage order matters
 

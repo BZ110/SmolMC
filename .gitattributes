@@ -1,0 +1,2 @@
+# Preserve captured tool output byte-for-byte, including blank lines at EOF.
+evidence/m4b*-raw/** whitespace=-blank-at-eof

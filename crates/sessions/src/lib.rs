@@ -15,6 +15,7 @@ pub mod control;
 #[cfg(all(test, unix))]
 extern crate self as smolmc_sessions;
 pub mod gameplay;
+mod inventory;
 #[cfg(all(test, unix))]
 #[path = "../../bridge/src/lib.rs"]
 mod java_bridge_fixture;
@@ -321,6 +322,8 @@ pub struct Service {
     seed: WorldId,
     next_route: AtomicUsize,
     gameplay: std::sync::OnceLock<gameplay::Config>,
+    items: std::sync::OnceLock<gameplay::ItemConfig>,
+    item_accounts: inventory::Accounts,
     gameplay_epoch: Instant,
 }
 
@@ -422,6 +425,8 @@ impl Service {
             seed,
             next_route: AtomicUsize::new(0),
             gameplay: std::sync::OnceLock::new(),
+            items: std::sync::OnceLock::new(),
+            item_accounts: Arc::default(),
             gameplay_epoch: Instant::now(),
         })
     }
@@ -710,6 +715,22 @@ impl Service {
             .set(config)
             .map_err(|_| invalid("arena already configured"))
     }
+    pub fn configure_items(&self, config: gameplay::ItemConfig) -> io::Result<()> {
+        if !self.worlds.empty()
+            || config.per_world == 0
+            || config.per_world > 4096
+            || config.shared < config.per_world
+            || config.shared > 32768
+        {
+            return Err(invalid("invalid/late item budgets"));
+        }
+        if config.policy != gameplay::InventoryPolicy::ArenaKit && self.imported.is_none() {
+            return Err(invalid("item gameplay requires imported terrain"));
+        }
+        self.items
+            .set(config)
+            .map_err(|_| invalid("items already configured"))
+    }
     fn gameplay_config(&self) -> gameplay::Config {
         self.gameplay.get().copied().unwrap_or(gameplay::Config {
             enabled: false,
@@ -728,6 +749,13 @@ impl Service {
     }
     pub fn registry_bytes(&self) -> usize {
         self.registries.encoded_bytes
+    }
+    pub fn inventory_snapshot(
+        &self,
+        entity: i32,
+        uuid: [u8; 16],
+    ) -> Result<gameplay::Inventory, control::ControlError> {
+        self.worlds.inventory_snapshot(entity, uuid)
     }
     pub fn chunk_template_bytes(&self) -> usize {
         self.imported_chunks.as_ref().map_or_else(
@@ -882,7 +910,7 @@ impl Service {
         connection
             .outbound
             .send(&wire::status_response_with(
-                "SmolMC M4A: isolated arenas / imported terrain / PvP",
+                "SmolMC M4B: isolated arenas / terrain / items / PvP",
                 count,
                 MAX_PLAYERS,
             ))
@@ -949,7 +977,9 @@ impl Service {
         };
         let entity = self
             .next_entity
-            .try_update(Relaxed, Relaxed, |value| value.checked_add(1))
+            .try_update(Relaxed, Relaxed, |value| {
+                (value < 999_999_999).then_some(value + 1)
+            })
             .map_err(|_| io::Error::other("entity identifiers exhausted"))?;
         self.metrics.authenticated.fetch_add(1, Relaxed);
         if context.trace {
@@ -1031,6 +1061,7 @@ impl Service {
         let arena = config.enabled || self.imported.is_some();
         let game = arena.then(|| {
             let mut state = gameplay::State::new(Instant::now(), config.spawn);
+            state.item_config = self.items.get().copied().unwrap_or_default();
             state.align_clock(self.gameplay_epoch);
             state.trace = context.trace;
             state.combat_enabled = config.enabled;
@@ -1099,6 +1130,19 @@ impl Service {
                 g.reposition(Instant::now(), config.spawn);
             }
         }
+        let uses_items = game.as_ref().is_some_and(|g| {
+            g.lock().unwrap().item_config.policy != gameplay::InventoryPolicy::ArenaKit
+        });
+        let _inventory_account = if uses_items {
+            let game = game.as_ref().unwrap();
+            Some(inventory::AccountLease::attach(
+                Arc::clone(&self.item_accounts),
+                profile.uuid,
+                Arc::clone(game),
+            )?)
+        } else {
+            None
+        };
         let mut teleport_id = 1i32;
         for packet in [
             play::default_spawn(config.spawn.map(|v| v as i32)),
@@ -1122,10 +1166,7 @@ impl Service {
         if let Some(game) = &game {
             let (packet, attributes) = {
                 let g = game.lock().unwrap();
-                (
-                    g.inventory.packet(),
-                    wire::pvp::attributes(entity, g.inventory.main()),
-                )
+                (g.inventory.packet(), g.inventory.attributes(entity))
             };
             deadline(5, connection.outbound.send(&packet)).await?;
             deadline(5, connection.outbound.send(&attributes)).await?;
@@ -1146,6 +1187,7 @@ impl Service {
             .await?;
         let mut wake = Arc::clone(&inbox.wake);
         let mut peer_view = replication::View::default();
+        let mut visible_items: Arc<[i32]> = Arc::from([]);
         let mut publish_dirty = false;
         let mut publish_due = Instant::now();
         let mut viewer_dirty = false;
@@ -1173,6 +1215,9 @@ impl Service {
             let target = *membership.target.borrow_and_update();
             if (target != membership.handle || respawning)
                 && (!player.dead || respawning)
+                && !game
+                    .as_ref()
+                    .is_some_and(|g| g.lock().unwrap().pending_block)
                 && player.pending_batch.is_none()
                 && player.pending_teleport.is_none()
             {
@@ -1198,6 +1243,10 @@ impl Service {
                     notices.world = membership.handle;
                 }
                 drop(replica_lease);
+                for &id in visible_items.iter() {
+                    deadline(5, connection.outbound.send(&presence::entity_remove(id))).await?;
+                }
+                visible_items = Arc::from([]);
                 deadline(5, peer_view.clear(&mut connection.outbound)).await?;
                 deadline(5, async {
                     for pos in player.view.positions() {
@@ -1309,7 +1358,7 @@ impl Service {
                         (
                             g.inventory.packet(),
                             g.health,
-                            wire::pvp::attributes(entity, g.inventory.main()),
+                            g.inventory.attributes(entity),
                         )
                     };
                     deadline(5, connection.outbound.send(&contents)).await?;
@@ -1479,7 +1528,11 @@ impl Service {
             let packet = tokio::select! {
                 _=tokio::time::sleep_until(due)=>continue,
                 event=critical_message(&mut inbox.critical)=>{
-                    match event? {
+                    let (event,_charge)=match event? {gameplay::Delivery::Charged{payload,charge}=>(*payload,Some(charge)),event=>(event,None)};
+                    let events=match event {gameplay::Delivery::Batch(events)=>events,event=>vec![event]};
+                    for event in events {match event {
+                        gameplay::Delivery::Batch(_)|gameplay::Delivery::Charged{..}=>return Err(invalid("nested critical batch")),
+                        gameplay::Delivery::Items{world,packets,visible}=>{if world==membership.handle.id{deadline(5,peer_view.flush(&mut connection.outbound,&inbox)).await?;for batch in packets.chunks(64){deadline(5,connection.outbound.send_batch(batch)).await?;tokio::task::yield_now().await;}visible_items=visible;}},
                         gameplay::Delivery::TerrainCommitted{world,packets,at}=>{if world==membership.handle {deadline(5,connection.outbound.send_batch(&packets)).await?;#[cfg(test)]crate::perf::BLOCK_WRITE.record(at.elapsed().as_micros()as u64);}#[cfg(not(test))]let _=at;},
                         gameplay::Delivery::Packets{entity:target,packets,at}=>{
                             if let Some(target)=target {
@@ -1497,7 +1550,7 @@ impl Service {
                             deadline(5,connection.outbound.send(&presence::pose(entity,player.replica().state))).await?;
                             replica_lease.update(player.replica())?;
                         },
-                    }
+                    }}
                     continue;
                 },
                 names=command_change(&mut membership.commands)=>{

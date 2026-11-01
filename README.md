@@ -1,6 +1,6 @@
 # SmolMC
 
-Rust Minecraft Java Edition **26.3 / protocol 777**, implemented through **M4A imported arena terrain and interactions**:
+Rust Minecraft Java Edition **26.3 / protocol 777**, with **M4B items, durability and armor implemented and user-accepted**:
 isolated worlds sharing immutable stone/registries, sparse COW snapshots, cheap
 clones/reset, profiles/budgets and event-driven idle lifecycle. See the
 [M2B engineering report](docs/M2B_ENGINEERING_REPORT.md) for acceptance and measurements.
@@ -24,12 +24,23 @@ profiles. See the [M4A report](docs/M4A_ENGINEERING_REPORT.md),
 [protocol evidence](docs/M4A_PROTOCOL_EVIDENCE.md) and
 [security review](docs/M4A_SECURITY_REVIEW.md). Full survival remains deferred.
 
+M4B adds counted inventories, real bounded dropped items, supported deterministic
+loot, sword/pickaxe durability and leather/iron/diamond/Netherite armor. Enable it
+explicitly with `--inventory-policy items-keep|items-clear` on imported terrain;
+the default `arena-kit` preserves controlled kit/reset behavior. Valid predicted
+click pipelines reconcile against Rust state. Native gameplay requires no JVM.
+See the [M4B report](docs/M4B_ENGINEERING_REPORT.md),
+[protocol evidence](docs/M4B_PROTOCOL_EVIDENCE.md) and
+[security/resource contract](docs/M4B_SECURITY_REVIEW.md). The user accepted the latest real-client interaction fixes; macOS/Linux, Java,
+reference and short resource checks passed. Checkpoint `m4b-validated`; no next
+milestone is authorized.
+
 Revised M3 was previously user-verified with two stock 26.3 clients.
 The accepted knockback profile follows 1.19.4-based behavior with the documented
 flat-arena contact policy; wire protocol remains 777.
 See the [M3 engineering report](docs/M3_ENGINEERING_REPORT.md),
 [protocol/gameplay evidence](docs/M3_PROTOCOL_EVIDENCE.md) and
-[security review](docs/M3_SECURITY_REVIEW.md). M4A preserves this combat profile; stop after M4A.
+[security review](docs/M3_SECURITY_REVIEW.md). M4B preserves unarmored combat and adds explicitly authorized 26.3 Netherite resistance; stop after M4B.
 See [AGENTS.md](AGENTS.md), [the roadmap](docs/13_ROADMAP.md),
 [ADR-006](decisions/ADR-006-m2b-shared-cow-overlays-and-budgets.md) and the
 [accepted M2A checkpoint/report](docs/M2A_ENGINEERING_REPORT.md).
@@ -70,6 +81,7 @@ target/release/smolmc --bind 127.0.0.1:25565 --trace-connections
 target/release/smolmc --instances 2 --world-profile read-only --bind 127.0.0.1:25565
 target/release/smolmc --pvp on --arena-spawn 8,64,8 --bind 127.0.0.1:25566
 target/release/smolmc --import-world '/path/to/world' --import-bounds '-16,-64,-80,48,320,-16' --world-profile build --pvp on --bind 127.0.0.1:25567
+target/release/smolmc --import-world '/path/to/world' --import-bounds '-16,-64,-80,48,320,-16' --world-profile build --pvp on --inventory-policy items-keep --bind 127.0.0.1:25568
 target/release/smolmc --help
 ```
 
@@ -81,8 +93,9 @@ never keys, tokens or payloads. Keep tracing off for ordinary load measurements.
 
 ## Optional Java SDK
 
-Java **17+**, SDK **0.3.0**, Unix socket schema **1.2**; old 0.1.0/1.0 and 0.2.0/1.1
-clients retain their operation/event subset. Extensions add combat observations,
+Java **17+**, SDK **0.4.0**, Unix socket schema **1.3**; old 0.1.0/1.0, 0.2.0/1.1
+and 0.3.0/1.2 clients retain their operation/event subset. Extensions add immutable
+inventory/count/durability/armor snapshots and combat observations,
 configured-template discovery and typed supported terrain reads/atomic edits. Bridge-off starts no JVM,
 listener, event bus or per-player Java queue. Enabling the bridge adds no Rust
 thread or world tick. Java remains a separate process; its memory is reported
@@ -158,6 +171,10 @@ updates. Both retain sparse COW and per-world/shared budgets. No persistence.
 | Retained overlay snapshots | 64 MiB shared charge budget, including pinned old snapshots; charges are payload/header policy accounting, not RSS |
 | Edits | ≤4096 operations/transaction; unchanged block/light snapshots shared by clones; imported lighting uses one bounded shared worker |
 | Session service | Fixed HTTPS origin; connect 3s/request 8s; response 64 KiB; no redirects/proxy routing |
+| Item gameplay | Explicit policy; 1024 entities/world, 8192 shared; configurable up to 4096/world and 32768 shared; 256 visible/viewer |
+| Reliable gameplay payloads | 128 KiB logical queued charge/viewer and 8 MiB shared; existing 32-message queue; frame/write budgets separate |
+| Interaction pipeline | 16 waiting inputs/player, eight finite delayed records/player, bounded lighting retries; shared scheduler sleeps when no work remains |
+| Item reconnect cache | 1024 identities in process; no eviction/repair or disk persistence |
 
 Admission can be configured with `--max-connections N` (up to 4096),
 `--connection-rate N` and `--per-ip-rate N` (up to 10000). Other limits remain
@@ -174,6 +191,8 @@ subsets. Narrow PvP rules explicitly identify supported swords/tools. General va
 No Mojang registry/tag JSON/NBT assets or implementation bodies are bundled.
 
 ## Verification and reports
+
+- [M4B: item gameplay, authority, limits, validation status and rollback](docs/M4B_ENGINEERING_REPORT.md)
 
 - [M4A: imported maps, collisions, held mining, performance and rollback](docs/M4A_ENGINEERING_REPORT.md)
 - [M4A supported subset and bounds](docs/M4A_TERRAIN_CONTRACT.md)

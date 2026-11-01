@@ -115,6 +115,9 @@ impl Server {
         self.stop.send(()).unwrap();
         self.task.await.unwrap().unwrap();
         self.service.shutdown().await.unwrap();
+        if let Ok(path) = std::env::var("SMOLMC_ITEMS_TIMING") {
+            std::fs::write(path, format!("{:#}\n", crate::perf::snapshot())).unwrap();
+        }
         (self.service.metrics.snapshot(), self.network.snapshot())
     }
 }
@@ -144,6 +147,12 @@ struct Observation {
     velocities: usize,
     last_velocity: [f64; 3],
     inventory: Vec<i32>,
+    stacks: Vec<wire::pvp::Item>,
+    revision: i32,
+    items: HashMap<i32, wire::pvp::Item>,
+    item_positions: HashMap<i32, [f64; 3]>,
+    pickups: usize,
+    armor: HashMap<i32, [i32; 4]>,
     equipped: HashMap<i32, [i32; 2]>,
     sounds: HashMap<String, usize>,
     sweeps: usize,
@@ -401,8 +410,22 @@ async fn pump(
             0x01 => {
                 let entity = r.varint().unwrap();
                 let uuid: [u8; 16] = r.take(16).unwrap().try_into().unwrap();
+                let kind = r.varint().unwrap();
+                if kind == wire::items::ITEM_ENTITY {
+                    let pos = std::array::from_fn(|_| {
+                        f64::from_be_bytes(r.take(8).unwrap().try_into().unwrap())
+                    });
+                    wire::pvp::read_lp(&mut r).unwrap();
+                    r.take(3).unwrap();
+                    assert_eq!(r.varint().unwrap(), 0);
+                    r.finish().unwrap();
+                    let mut o = observation.lock().unwrap();
+                    o.items.insert(entity, wire::pvp::Item::Empty);
+                    o.item_positions.insert(entity, pos);
+                    continue;
+                }
                 assert!(info.contains(&uuid));
-                assert_eq!(r.varint().unwrap(), 159);
+                assert_eq!(kind, 159);
                 r.take(24).unwrap();
                 assert_eq!(r.byte().unwrap(), 0);
                 r.take(3).unwrap();
@@ -412,9 +435,21 @@ async fn pump(
                 stats.spawns += 1;
             }
             0x23 => {
-                assert!(entities.contains_key(&r.varint().unwrap()));
+                let entity = r.varint().unwrap();
                 assert_eq!(r.varint().unwrap(), 0);
-                r.take(32).unwrap();
+                let pos = std::array::from_fn(|_| {
+                    f64::from_be_bytes(r.take(8).unwrap().try_into().unwrap())
+                });
+                r.take(8).unwrap();
+                if observation.lock().unwrap().items.contains_key(&entity) {
+                    observation
+                        .lock()
+                        .unwrap()
+                        .item_positions
+                        .insert(entity, pos);
+                } else {
+                    assert!(entities.contains_key(&entity));
+                }
                 r.boolean().unwrap();
                 r.finish().unwrap();
                 stats.positions += 1;
@@ -427,6 +462,21 @@ async fn pump(
             0x65 => {
                 let entity = r.varint().unwrap();
                 let first = r.byte().unwrap();
+                if first == 8 {
+                    assert_eq!(r.varint().unwrap(), wire::items::ITEM_SERIALIZER);
+                    let item = probe_item(&mut r);
+                    assert_eq!(r.byte().unwrap(), 255);
+                    r.finish().unwrap();
+                    assert!(
+                        observation
+                            .lock()
+                            .unwrap()
+                            .items
+                            .insert(entity, item)
+                            .is_some()
+                    );
+                    continue;
+                }
                 if first == 9 {
                     assert_eq!(r.varint().unwrap(), 3);
                     let health = f32::from_be_bytes(r.take(4).unwrap().try_into().unwrap());
@@ -450,7 +500,10 @@ async fn pump(
             }
             0x4e => {
                 assert_eq!(r.varint().unwrap(), 1);
-                assert!(entities.remove(&r.varint().unwrap()).is_some());
+                let entity = r.varint().unwrap();
+                let item = observation.lock().unwrap().items.remove(&entity).is_some();
+                observation.lock().unwrap().item_positions.remove(&entity);
+                assert!(item || entities.remove(&entity).is_some());
                 r.finish().unwrap();
                 stats.removes += 1;
             }
@@ -490,28 +543,49 @@ async fn pump(
             }
             0x12 => {
                 assert_eq!(r.varint().unwrap(), 0);
-                assert!(r.varint().unwrap() >= 0);
+                let revision = r.varint().unwrap();
+                assert!(revision >= 0);
                 assert_eq!(r.varint().unwrap(), 46);
-                let items = (0..46).map(|_| probe_stack(&mut r)).collect();
+                let stacks: Vec<_> = (0..46).map(|_| probe_item(&mut r)).collect();
+                let items = stacks.iter().map(|i| i.id()).collect();
+                {
+                    let mut o = observation.lock().unwrap();
+                    o.stacks = stacks;
+                    o.revision = revision;
+                }
                 probe_stack(&mut r);
                 r.finish().unwrap();
                 observation.lock().unwrap().inventory = items;
             }
             0x68 => {
                 let id = r.varint().unwrap();
-                assert!(entities.contains_key(&id));
-                let mut items = [0; 2];
+                assert!(
+                    entities.contains_key(&id) || Some(id) == self_id,
+                    "equipment id={id} self={self_id:?}"
+                );
+                let mut items = [0; 6];
                 loop {
                     let slot = r.byte().unwrap();
                     let index = (slot & 127) as usize;
-                    assert!(index < 2);
+                    assert!(index < 6);
                     items[index] = probe_stack(&mut r);
                     if slot & 128 == 0 {
                         break;
                     }
                 }
                 r.finish().unwrap();
-                observation.lock().unwrap().equipped.insert(id, items);
+                let mut o = observation.lock().unwrap();
+                o.equipped.insert(id, [items[0], items[1]]);
+                o.armor.insert(id, [items[2], items[3], items[4], items[5]]);
+            }
+            0x7f => {
+                let id = r.varint().unwrap();
+                assert!(observation.lock().unwrap().items.contains_key(&id));
+                r.varint().unwrap();
+                let n = r.varint().unwrap();
+                assert!((1..=64).contains(&n));
+                r.finish().unwrap();
+                observation.lock().unwrap().pickups += n as usize;
             }
             0x7b => {
                 let id = r.varint().unwrap();
@@ -616,19 +690,19 @@ async fn pump(
             }
             0x86 => {
                 r.varint().unwrap();
-                assert_eq!(r.varint().unwrap(), 1);
-                assert_eq!(r.varint().unwrap(), 5);
-                assert_eq!(
-                    f64::from_be_bytes(r.take(8).unwrap().try_into().unwrap()),
-                    4.
-                );
                 let n = r.varint().unwrap();
-                assert!(n == 0 || n == 1);
-                if n == 1 {
-                    assert_eq!(r.string(64).unwrap(), "minecraft:base_attack_speed");
-                    let modifier = f64::from_be_bytes(r.take(8).unwrap().try_into().unwrap());
-                    assert!([(-2.4f32 as f64), (-2.8f32 as f64)].contains(&modifier));
-                    assert_eq!(r.varint().unwrap(), 0);
+                assert!(n == 1 || n == 3 || n == 4);
+                for _ in 0..n {
+                    let key = r.varint().unwrap();
+                    assert!([1, 2, 5, wire::items::KNOCKBACK_ATTRIBUTE].contains(&key));
+                    r.take(8).unwrap();
+                    let m = r.varint().unwrap();
+                    assert!((0..=1).contains(&m));
+                    for _ in 0..m {
+                        r.string(64).unwrap();
+                        r.take(8).unwrap();
+                        r.varint().unwrap();
+                    }
                 }
                 r.finish().unwrap();
             }
@@ -755,6 +829,14 @@ async fn active_play_resource_probe() {
                     spawn: [8., if pvp { 200. } else { 201. }, -40.],
                 })
                 .unwrap();
+            if std::env::var("SMOLMC_PROBE_ITEMS").as_deref() == Ok("1") {
+                service
+                    .configure_items(gameplay::ItemConfig {
+                        policy: gameplay::InventoryPolicy::ItemsKeep,
+                        ..Default::default()
+                    })
+                    .unwrap();
+            }
             Server::serve_service(service, worlds, true).await
         } else {
             Server::configured(worlds, false, pvp).await
@@ -1079,19 +1161,27 @@ async fn java_sidecar_controls_real_encrypted_play() {
     assert_eq!(n.protocol_errors, 0);
 }
 
-fn probe_stack(r: &mut Reader<'_>) -> i32 {
+fn probe_item(r: &mut Reader<'_>) -> wire::pvp::Item {
     let count = r.varint().unwrap();
     if count == 0 {
-        return 0;
+        return wire::pvp::Item::Empty;
     }
-    assert_eq!(count, 1);
+    assert!((1..=64).contains(&count));
     let id = r.varint().unwrap();
-    assert!(
-        id == 1045 || id == 1050 || id == 1047 || smolmc_world::STATES.iter().any(|s| s.item == id)
-    );
-    assert_eq!(r.varint().unwrap(), 0);
-    assert_eq!(r.varint().unwrap(), 0);
-    id
+    let added = r.varint().unwrap();
+    let removed = r.varint().unwrap();
+    assert_eq!(removed, 0);
+    assert!((0..=1).contains(&added));
+    let damage = if added == 1 {
+        assert_eq!(r.varint().unwrap(), wire::items::DAMAGE_COMPONENT);
+        r.varint().unwrap()
+    } else {
+        0
+    };
+    wire::pvp::Item::new(id, count as u8, damage as u16).unwrap()
+}
+fn probe_stack(r: &mut Reader<'_>) -> i32 {
+    probe_item(r).id()
 }
 
 #[tokio::test]
@@ -1343,6 +1433,385 @@ fn terrain_fixture() -> Arc<smolmc_world::terrain::ImportedTerrain> {
     };
     smolmc_world::lighting::relight_base(&mut base).unwrap();
     Arc::new(base)
+}
+fn item_click(revision: i32, slot: i16, button: u8, kind: i32) -> Vec<u8> {
+    let mut p = login::Encoder::new(0x12);
+    p.varint(0);
+    p.varint(revision);
+    p.raw(&slot.to_be_bytes());
+    p.byte(button);
+    p.varint(kind);
+    p.varint(0);
+    p.boolean(false);
+    p.finish()
+}
+fn item_dig(action: i32, pos: [i32; 3], sequence: i32) -> Vec<u8> {
+    let mut p = login::Encoder::new(0x29);
+    p.varint(action);
+    p.raw(&play::pack_block_pos(pos).to_be_bytes());
+    p.byte(1);
+    p.varint(sequence);
+    p.finish()
+}
+fn item_place(pos: [i32; 3], sequence: i32) -> Vec<u8> {
+    let mut p = login::Encoder::new(0x42);
+    p.varint(0);
+    p.raw(&play::pack_block_pos(pos).to_be_bytes());
+    p.varint(1);
+    for v in [0.5f32, 1., 0.5] {
+        p.raw(&v.to_be_bytes());
+    }
+    p.boolean(false);
+    p.boolean(false);
+    p.varint(sequence);
+    p.finish()
+}
+#[tokio::test]
+async fn placement_replaces_short_and_double_grass_but_keeps_solid_grass_blocks() {
+    let service = Arc::new(
+        Service::with_terrain_instances(
+            1,
+            WorldProfile::builder(),
+            terrain_fixture(),
+            [8., 64., 8.],
+        )
+        .unwrap(),
+    );
+    service
+        .configure_pvp(gameplay::Config {
+            enabled: true,
+            spawn: [8., 64., 8.],
+        })
+        .unwrap();
+    service
+        .configure_items(gameplay::ItemConfig {
+            policy: gameplay::InventoryPolicy::ItemsKeep,
+            ..Default::default()
+        })
+        .unwrap();
+    let server = Server::serve_service(service, 1, false).await;
+    let short = Material::parse("minecraft:short_grass", None).unwrap();
+    let lower = Material::parse("minecraft:tall_grass", Some("half=lower")).unwrap();
+    let upper = Material::parse("minecraft:tall_grass", Some("half=upper")).unwrap();
+    let solid = Material::parse("minecraft:grass_block", Some("snowy=false")).unwrap();
+    server
+        .service
+        .worlds
+        .edit_terrain(
+            server.worlds[0],
+            vec![
+                ([10, 64, 8], short),
+                ([12, 64, 8], lower),
+                ([12, 65, 8], upper),
+                ([10, 63, 10], solid),
+            ],
+        )
+        .await
+        .unwrap();
+    let a = Client::stationary(server.address).await;
+    for (seq, selected, pos) in [
+        (1, 2, [10, 64, 8]),
+        (2, 3, [12, 64, 8]),
+        (3, 4, [10, 63, 10]),
+    ] {
+        a.send(vec![0x36, 0, selected]).await;
+        a.send(item_place(pos, seq)).await;
+        a.wait(|o| o.block_acks.contains(&seq) && o.stacks[36 + selected as usize].count() == 0)
+            .await;
+    }
+    assert_eq!(
+        server
+            .service
+            .read_blocks(
+                server.worlds[0],
+                &[
+                    [10, 64, 8],
+                    [10, 65, 8],
+                    [12, 64, 8],
+                    [12, 65, 8],
+                    [10, 63, 10],
+                    [10, 64, 10]
+                ]
+            )
+            .unwrap(),
+        vec![
+            Material::Stone,
+            Material::Air,
+            Material::parse("minecraft:oak_planks", None).unwrap(),
+            Material::Air,
+            solid,
+            Material::parse("minecraft:cobblestone", None).unwrap()
+        ]
+    );
+    a.stop().await;
+    let (_, n) = server.stop().await;
+    assert_eq!(n.protocol_errors, 0);
+}
+#[tokio::test]
+async fn pipelined_placement_mining_early_finish_and_armor_clicks_reconcile() {
+    let service = Arc::new(
+        Service::with_terrain_instances(
+            1,
+            WorldProfile::builder(),
+            terrain_fixture(),
+            [8., 64., 8.],
+        )
+        .unwrap(),
+    );
+    service
+        .configure_pvp(gameplay::Config {
+            enabled: true,
+            spawn: [8., 64., 8.],
+        })
+        .unwrap();
+    service
+        .configure_items(gameplay::ItemConfig {
+            policy: gameplay::InventoryPolicy::ItemsKeep,
+            ..Default::default()
+        })
+        .unwrap();
+    let server = Server::serve_service(service, 1, false).await;
+    server
+        .service
+        .worlds
+        .edit_terrain(server.worlds[0], vec![([11, 64, 8], Material::Stone)])
+        .await
+        .unwrap();
+    let a = Client::stationary(server.address).await;
+    let b = Client::stationary(server.address).await;
+    a.sequence(vec![
+        vec![0x36, 0, 2],
+        item_place([10, 63, 8], 1),
+        vec![0x36, 0, 1],
+        item_dig(0, [10, 64, 8], 2),
+        item_dig(3, [10, 64, 8], 3),
+    ])
+    .await;
+    tokio::time::sleep(Duration::from_millis(50)).await;
+    a.send(item_dig(0, [11, 64, 8], 4)).await;
+    tokio::time::sleep(Duration::from_millis(450)).await;
+    a.send(item_dig(3, [11, 64, 8], 5)).await;
+    a.wait(|o| {
+        o.block_acks.contains(&3)
+            && o.stacks[37].damage() == 2
+            && o.stacks[38].count() == 0
+            && o.blocks.get(&[10, 64, 8]) == Some(&0)
+            && o.blocks.get(&[11, 64, 8]) == Some(&0)
+    })
+    .await;
+    b.wait(|o| o.blocks.get(&[10, 64, 8]) == Some(&0) && !o.items.is_empty())
+        .await;
+    a.send(item_click(a.observe().revision, 14, 0, 1)).await;
+    a.wait(|o| {
+        o.stacks[5].id()
+            == wire::pvp::Item::named("minecraft:iron_helmet", 1)
+                .unwrap()
+                .id()
+    })
+    .await;
+    let revision = a.observe().revision;
+    a.sequence(vec![
+        item_click(revision, 5, 0, 0),
+        item_click(revision, 26, 0, 0),
+    ])
+    .await;
+    a.wait(|o| {
+        o.stacks[5] == wire::pvp::Item::Empty
+            && o.stacks[26].id()
+                == wire::pvp::Item::named("minecraft:iron_helmet", 1)
+                    .unwrap()
+                    .id()
+    })
+    .await;
+    // Independent players submit in the same lighting window: both are retried,
+    // each placement consumes one block, and neither request is silently lost.
+    a.sequence(vec![vec![0x36, 0, 3], item_place([11, 63, 8], 6)])
+        .await;
+    b.sequence(vec![vec![0x36, 0, 3], item_place([12, 63, 8], 1)])
+        .await;
+    a.wait(|o| o.block_acks.contains(&6) && o.stacks[39].count() == 0)
+        .await;
+    b.wait(|o| o.block_acks.contains(&1) && o.stacks[39].count() == 0)
+        .await;
+    assert_eq!(
+        server
+            .service
+            .read_blocks(server.worlds[0], &[[11, 64, 8], [12, 64, 8]])
+            .unwrap(),
+        vec![Material::parse("minecraft:oak_planks", None).unwrap(); 2]
+    );
+    a.stop().await;
+    b.stop().await;
+    let (s, n) = server.stop().await;
+    assert_eq!(s.slow_viewers, 0);
+    assert_eq!(n.protocol_errors, 0);
+    assert_eq!(n.task_failures, 0);
+}
+#[tokio::test]
+async fn items_encrypted_mining_drop_pickup_equipment_armor_durability_and_isolation() {
+    items_scenario(false).await;
+}
+#[tokio::test]
+#[ignore = "requires compiled Java SDK; explicit item snapshot integration"]
+async fn items_java_sdk_snapshots() {
+    items_scenario(true).await;
+}
+async fn items_scenario(with_java: bool) {
+    let service = Arc::new(
+        Service::with_terrain_instances(
+            1,
+            WorldProfile::builder(),
+            terrain_fixture(),
+            [8., 64., 8.],
+        )
+        .unwrap(),
+    );
+    service
+        .configure_pvp(gameplay::Config {
+            enabled: true,
+            spawn: [8., 64., 8.],
+        })
+        .unwrap();
+    service
+        .configure_items(gameplay::ItemConfig {
+            policy: gameplay::InventoryPolicy::ItemsKeep,
+            ..Default::default()
+        })
+        .unwrap();
+    let directory = std::env::temp_dir().join(format!("smc-items-java-{}", std::process::id()));
+    let bridge = with_java.then(|| {
+        crate::java_bridge_fixture::Bridge::start(
+            Arc::clone(&service),
+            &directory,
+            crate::java_bridge_fixture::Access::Observe,
+        )
+        .unwrap()
+    });
+    let server = Server::serve_service(service, 2, false).await;
+    // Exposed stone at head height lets both clients view an item before pickup.
+    server
+        .service
+        .worlds
+        .edit_terrain(server.worlds[0], vec![([10, 64, 8], Material::Stone)])
+        .await
+        .unwrap();
+    let a = Client::stationary(server.address).await;
+    let isolated = Client::stationary(server.address).await;
+    let b = Client::stationary(server.address).await;
+    a.wait(|o| o.entities.contains_key(&3)).await;
+    b.wait(|o| o.entities.contains_key(&1)).await;
+    a.send(vec![0x36, 0, 1]).await;
+    a.send(item_dig(0, [10, 64, 8], 1)).await;
+    a.wait(|o| o.block_acks.contains(&1)).await;
+    tokio::time::sleep(Duration::from_millis(450)).await;
+    a.send(item_dig(3, [10, 64, 8], 2)).await;
+    a.wait(|o| o.stacks[37].damage() == 1 && !o.items.is_empty())
+        .await;
+    b.wait(|o| !o.items.is_empty()).await;
+    assert!(isolated.observe().items.is_empty());
+    assert_eq!(
+        a.observe().items.values().next().unwrap().id(),
+        wire::pvp::Item::named("minecraft:cobblestone", 1)
+            .unwrap()
+            .id()
+    );
+    // Move to the item under ordinary movement validation, without trusted pickup.
+    tokio::time::sleep(Duration::from_millis(600)).await;
+    let mut p = login::Encoder::new(0x1e);
+    for v in [9.3f64, 64., 8.] {
+        p.raw(&v.to_be_bytes());
+    }
+    p.byte(1);
+    a.send(p.finish()).await;
+    a.wait(|o| o.pickups >= 1 && o.items.is_empty()).await;
+    assert_eq!(
+        a.observe()
+            .stacks
+            .iter()
+            .filter(|s| s.id()
+                == wire::pvp::Item::named("minecraft:cobblestone", 1)
+                    .unwrap()
+                    .id())
+            .map(|s| s.count() as u32)
+            .sum::<u32>(),
+        2
+    );
+    // Equip iron helmet through a real shift click, and observe it on the peer.
+    a.send(item_click(a.observe().revision, 14, 0, 1)).await;
+    b.wait(|o| {
+        o.armor.get(&1).is_some_and(|a| {
+            a[3] == wire::pvp::Item::named("minecraft:iron_helmet", 1)
+                .unwrap()
+                .id()
+        })
+    })
+    .await;
+    a.send(vec![0x36, 0, 0]).await;
+    b.send(vec![0x36, 0, 0]).await;
+    tokio::time::sleep(Duration::from_millis(700)).await;
+    b.send(vec![1, 1]).await;
+    a.wait(|o| o.health.is_some_and(|h| h < 20.) && o.stacks[5].damage() > 0)
+        .await;
+    b.wait(|o| o.stacks[36].damage() == 1).await;
+    assert!(a.observe().health.unwrap() > 14.); // helmet mitigation, same six raw damage
+    if with_java {
+        let mut java = std::process::Command::new("java")
+            .args(["-Xmx64m", "-ea", "-cp"])
+            .arg(PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../target/java/classes"))
+            .arg("dev.smolmc.ItemsIntegration")
+            .arg(&directory)
+            .spawn()
+            .unwrap();
+        let status = timeout(Duration::from_secs(15), async {
+            loop {
+                if let Some(status) = java.try_wait().unwrap() {
+                    break status;
+                }
+                tokio::time::sleep(Duration::from_millis(20)).await;
+            }
+        })
+        .await
+        .unwrap();
+        assert!(status.success());
+    }
+    // Q drops the authoritative sword and preserves its component state.
+    let mut drop = login::Encoder::new(0x29);
+    drop.varint(5);
+    drop.raw(&0u64.to_be_bytes());
+    drop.byte(0);
+    drop.varint(0);
+    a.send(drop.finish()).await;
+    a.wait(|o| o.stacks[36] == wire::pvp::Item::Empty && !o.items.is_empty())
+        .await;
+    b.wait(|o| !o.items.is_empty()).await;
+    assert!(isolated.observe().items.is_empty());
+    a.stop().await;
+    b.stop().await;
+    isolated.stop().await;
+    // Closing fixture sockets does not await the server's membership leases.
+    // Reset remains correctly rejected until those sessions have left.
+    timeout(Duration::from_secs(2), async {
+        while !server.service.worlds.empty() {
+            tokio::task::yield_now().await;
+        }
+    })
+    .await
+    .unwrap();
+    let fresh = server.service.reset_world(server.worlds[0]).unwrap();
+    assert_eq!(
+        server.service.read_blocks(fresh, &[[10, 64, 8]]).unwrap(),
+        vec![Material::Air]
+    );
+    server.service.destroy_world(fresh).unwrap();
+    if let Some(bridge) = bridge {
+        bridge.shutdown().await.unwrap();
+    }
+    let (s, n) = server.stop().await;
+    assert_eq!(s.active_replicas, 0);
+    assert_eq!(n.active, 0);
+    assert_eq!(n.protocol_errors, 0);
+    assert_eq!(n.task_failures, 0);
+    assert_eq!(s.slow_viewers, 0);
 }
 #[tokio::test]
 async fn terrain_encrypted_build_collision_isolation_reset_and_readonly() {

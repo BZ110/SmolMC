@@ -364,6 +364,24 @@ impl Worlds {
         let state = game.lock().unwrap().snapshot();
         Ok(state)
     }
+    pub fn inventory_snapshot(
+        &self,
+        entity: i32,
+        uuid: [u8; 16],
+    ) -> Result<crate::gameplay::Inventory, ControlError> {
+        let c = self.catalog.lock().unwrap();
+        let p = c.players.get(&entity).ok_or(WorldError::UnknownPlayer)?;
+        if p.control
+            .as_ref()
+            .is_none_or(|(profile, _)| profile.uuid != uuid)
+        {
+            return Err(WorldError::StaleHandle.into());
+        }
+        let game = p.game.clone().ok_or(ControlError::Disabled)?;
+        drop(c);
+        let inventory = game.lock().unwrap().inventory.clone();
+        Ok(inventory)
+    }
     pub fn combat_event(
         &self,
         kind: u8,

@@ -33,3 +33,14 @@
 
 ## Archive restrictions and verification
 User-supplied `/mnt/data/unz.zip` was inventoried **locally**. The research pack includes **metadata and file paths only**, no Mojang Java source, JSON registry dump or binary NBT copied from the archive. Paths and descriptions are a navigational index for a later authorized developer. Do not commit the archive or generated extracted source to a public repository by default. Independent protocol specifications and clean-room implementations are preferred.
+
+## M4B local runtime evidence (2026-10-30)
+
+The authorized M4B implementation also checked the operator-owned installed 26.3
+client JAR (SHA-256 `4508d006323f24fa02876310c192d739af56516eb259000ac50f0909a68c9a2d`)
+with original adapters. [Protocol/mechanics ledger](M4B_PROTOCOL_EVIDENCE.md)
+records private path-level sources, observed codec/component/armor/resistance
+facts, conservative loot derivation and exact scope. The
+[result manifest](../evidence/m4b-reference.json) retains hashes and outcomes.
+No private JAR, implementation body or loot-table asset is delivered. User client
+acceptance and local design policies remain separate from primitive oracle tests.

@@ -14,14 +14,14 @@ import java.util.concurrent.atomic.*;
 import java.util.function.*;
 
 /**
- * Optional local SmolMC SDK 0.3.0 (schema 1.2), Java 17+. Every operation is async. close()
+ * Optional local SmolMC SDK 0.4.0 (schema 1.3), Java 17+. Every operation is async. close()
  * disconnects this control peer; launched process ownership is separate. Dependent actions may run
  * on bounded completion workers or the attaching caller (standard CompletableFuture behavior).
  * Never block waiting for another SDK future inside such an action; compose with thenCompose
  * instead.
  */
 public final class MinecraftRustServer implements AutoCloseable {
-  public static final String API_VERSION = "0.3.0";
+  public static final String API_VERSION = "0.4.0";
   static final int MAX_FRAME = 131072, MAX_PENDING = 64;
 
   public enum Profile {
@@ -147,6 +147,12 @@ public final class MinecraftRustServer implements AutoCloseable {
   public record CombatState(
       float health, boolean dead, int selectedSlot, int mainHandItemId, int offHandItemId) {}
 
+  public record ItemStack(int itemId,int count,int damage,int maxDamage) {
+    public ItemStack {if(itemId<0||count<0||count>64||damage<0||maxDamage<0||damage>maxDamage||count==0&&itemId!=0||maxDamage>0&&count>1)throw new IllegalArgumentException("invalid item stack snapshot");}
+  }
+  public record InventoryState(int revision,int selectedSlot,List<ItemStack> slots,ItemStack cursor,float armor,float toughness) {
+    public InventoryState {slots=List.copyOf(slots);if(slots.size()!=46||selectedSlot<0||selectedSlot>8)throw new IllegalArgumentException("invalid inventory snapshot");}
+  }
   public record CombatChange(CombatState state, int sourceEntityId, float damage) {}
 
   private record Pending(
@@ -247,7 +253,7 @@ public final class MinecraftRustServer implements AutoCloseable {
                 d.writeLong(1);
                 d.writeByte(0);
                 d.writeShort(1);
-                d.writeShort(2);
+                d.writeShort(3);
                 d.write(token);
               });
       try {
@@ -262,7 +268,7 @@ public final class MinecraftRustServer implements AutoCloseable {
       int status = r.u16();
       if (status != 0) throw error(status, r.string(1024));
       UUID id = r.uuid();
-      if (r.u16() != 1 || r.u16() != 2 || !r.string(32).equals(API_VERSION))
+      if (r.u16() != 1 || r.u16() != 3 || !r.string(32).equals(API_VERSION))
         throw new IOException("unsupported SDK/schema version");
       boolean control = r.u8() == 1;
       r.end();
@@ -502,6 +508,11 @@ public final class MinecraftRustServer implements AutoCloseable {
   }
 
   public final class Players {
+    /** Immutable authoritative snapshot, including the four normal armor slots (5..8). */
+    public CompletableFuture<InventoryState> inventory(PlayerHandle player) {
+      return request(24,d->putPlayer(d,player),r->{int revision=r.i32(),selected=r.u8(),n=r.count(46);if(n!=46)throw new IOException("inventory slot count");List<ItemStack> slots=new ArrayList<>(46);for(int i=0;i<n;i++)slots.add(itemStack(r));return new InventoryState(revision,selected,slots,itemStack(r),r.f32(),r.f32());});
+    }
+
     /** Authoritative cold snapshot. PvP disabled, missing and stale sessions fail explicitly. */
     public CompletableFuture<CombatState> combat(PlayerHandle player) {
       return request(19, d -> putPlayer(d, player), MinecraftRustServer::combatState);
@@ -837,6 +848,7 @@ public final class MinecraftRustServer implements AutoCloseable {
     if (n > 4096) throw new IllegalArgumentException("batch exceeds 4096");
   }
 
+  private static ItemStack itemStack(Wire r)throws IOException {return new ItemStack(r.i32(),r.u8(),r.u16(),r.u16());}
   private static CombatState combatState(Wire r) throws IOException {
     float health = r.f32();
     int dead = r.u8(), selected = r.u8();

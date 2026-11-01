@@ -1,15 +1,34 @@
 //! Optional arena combat/inventory. Mutations are serialized by the directory;
 //! shared state locks are per session and never cover IO or Java callbacks.
-use smolmc_protocol_777::{
-    presence::EntitySnapshot,
-    pvp::{self, Action, Item},
-};
+use smolmc_protocol_777::{presence::EntitySnapshot, pvp::Item};
 use std::{
     sync::{Arc, Mutex},
     time::Duration,
 };
 use tokio::time::Instant;
 pub type Shared = Arc<Mutex<State>>;
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum InventoryPolicy {
+    #[default]
+    ArenaKit,
+    ItemsKeep,
+    ItemsClear,
+}
+#[derive(Clone, Copy, Debug)]
+pub struct ItemConfig {
+    pub policy: InventoryPolicy,
+    pub per_world: usize,
+    pub shared: usize,
+}
+impl Default for ItemConfig {
+    fn default() -> Self {
+        Self {
+            policy: InventoryPolicy::ArenaKit,
+            per_world: 1024,
+            shared: 8192,
+        }
+    }
+}
 #[derive(Clone, Copy, Debug)]
 pub struct Config {
     pub enabled: bool,
@@ -23,95 +42,8 @@ impl Default for Config {
         }
     }
 }
-#[derive(Clone, Debug)]
-pub struct Inventory {
-    pub slots: [Item; 46],
-    pub cursor: Item,
-    pub selected: u8,
-    pub revision: i32,
-}
-impl Default for Inventory {
-    fn default() -> Self {
-        let mut slots = [Item::Empty; 46];
-        slots[36] = Item::IronSword;
-        slots[9] = Item::DiamondSword;
-        Self {
-            slots,
-            cursor: Item::Empty,
-            selected: 0,
-            revision: 0,
-        }
-    }
-}
-impl Inventory {
-    pub fn main(&self) -> Item {
-        self.slots[36 + self.selected as usize]
-    }
-    pub fn off(&self) -> Item {
-        self.slots[45]
-    }
-    pub fn packet(&self) -> Vec<u8> {
-        pvp::inventory(self.revision, &self.slots, self.cursor)
-    }
-    pub fn apply(&mut self, a: &Action) -> bool {
-        match *a {
-            Action::Select(slot) => {
-                if slot >= 9 || slot == self.selected {
-                    return false;
-                }
-                self.selected = slot;
-            }
-            Action::Swap => self.slots.swap(36 + self.selected as usize, 45),
-            Action::Close => {
-                if self.cursor == Item::Empty {
-                    return false;
-                }
-                if let Some(slot) = (9..45).find(|&slot| self.slots[slot] == Item::Empty) {
-                    self.slots[slot] = self.cursor;
-                    self.cursor = Item::Empty;
-                } else {
-                    return false;
-                }
-            }
-            Action::Click {
-                state,
-                slot,
-                button,
-                kind,
-            } => {
-                if state != self.revision || !(9..46).contains(&slot) {
-                    return false;
-                }
-                let slot = slot as usize;
-                match kind {
-                    0 if button <= 1 => std::mem::swap(&mut self.slots[slot], &mut self.cursor),
-                    1 if button == 0 || button == 1 => {
-                        let range = if slot >= 36 { 9..36 } else { 36..45 };
-                        if let Some(target) =
-                            range.into_iter().find(|&i| self.slots[i] == Item::Empty)
-                        {
-                            self.slots.swap(slot, target);
-                        } else {
-                            return false;
-                        }
-                    }
-                    2 if button <= 8 || button == 40 => self.slots.swap(
-                        slot,
-                        if button == 40 {
-                            45
-                        } else {
-                            36 + button as usize
-                        },
-                    ),
-                    _ => return false,
-                }
-            }
-            _ => return false,
-        }
-        self.revision = (self.revision + 1) & 32767;
-        true
-    }
-}
+pub use crate::inventory::Inventory;
+pub use crate::inventory::after_armor;
 pub(crate) struct Notices {
     pub worlds: Arc<crate::worlds::Worlds>,
     pub world: smolmc_world::WorldHandle,
@@ -143,7 +75,7 @@ pub fn mining_progress(material: smolmc_world::Material, item: Item, grounded: b
     if info.hardness < 0. {
         return 0.;
     }
-    let mut speed = if item == Item::IronPickaxe && info.pickaxe {
+    let mut speed = if item.info().is_some_and(|i| i.pickaxe) && info.pickaxe {
         6.
     } else if item.sword() {
         info.sword_speed
@@ -153,10 +85,24 @@ pub fn mining_progress(material: smolmc_world::Material, item: Item, grounded: b
     if !grounded {
         speed /= 5.;
     }
-    let correct = !info.requires_tool || (item == Item::IronPickaxe && info.iron_correct);
+    let correct =
+        !info.requires_tool || (item.info().is_some_and(|i| i.pickaxe) && info.iron_correct);
     speed / info.hardness / if correct { 30. } else { 100. }
 }
+#[derive(Clone, Debug)]
+pub(crate) struct DelayedBlock {
+    pub at: Instant,
+    pub action: smolmc_protocol_777::pvp::Action,
+    pub retries: u8,
+    pub mining: Option<Mining>,
+}
 pub struct State {
+    pub(crate) delayed_block: Vec<DelayedBlock>,
+    pub(crate) account: Option<(crate::inventory::Accounts, [u8; 16])>,
+    pub(crate) item_active: bool,
+    pub item_config: ItemConfig,
+    pub(crate) pending_block: bool,
+    pub(crate) pending_commit: bool,
     pub(crate) mining: Option<Mining>,
     pub(crate) blocks: Option<BlockOwner>,
     pub(crate) block_sequence: i32,
@@ -200,6 +146,12 @@ impl State {
 
     pub fn new(now: Instant, spawn: [f64; 3]) -> Self {
         Self {
+            delayed_block: Vec::new(),
+            pending_commit: false,
+            account: None,
+            item_active: true,
+            item_config: ItemConfig::default(),
+            pending_block: false,
             blocks: None,
             mining: None,
             block_sequence: -1,
@@ -253,10 +205,35 @@ impl State {
             (41, "minecraft:white_wool"),
         ] {
             if let Some(m) = smolmc_world::Material::parse(name, None) {
-                self.inventory.slots[slot] = Item::Block {
-                    state: m.state(),
-                    item: m.info().item,
-                };
+                self.inventory.slots[slot] = Item::new(m.info().item, 1, 0).unwrap();
+            }
+        }
+        if self.item_config.policy != InventoryPolicy::ArenaKit {
+            for (start, material) in [
+                (10, "leather"),
+                (14, "iron"),
+                (18, "diamond"),
+                (22, "netherite"),
+            ] {
+                for (offset, part) in ["helmet", "chestplate", "leggings", "boots"]
+                    .into_iter()
+                    .enumerate()
+                {
+                    self.inventory.slots[start + offset] =
+                        Item::named(&format!("minecraft:{material}_{part}"), 1).unwrap();
+                }
+            }
+            #[cfg(test)]
+            if std::env::var("SMOLMC_PROBE_ARMOR").as_deref() == Ok("1") {
+                for (slot, name) in [
+                    (5, "helmet"),
+                    (6, "chestplate"),
+                    (7, "leggings"),
+                    (8, "boots"),
+                ] {
+                    self.inventory.slots[slot] =
+                        Item::named(&format!("minecraft:iron_{name}"), 1).unwrap();
+                }
             }
         }
     }
@@ -307,12 +284,7 @@ impl State {
         let ticks = self.tick(now);
         let scale = self.attack_strength(now);
         self.last_attack = ticks + 1;
-        let base = match self.inventory.main() {
-            Item::IronSword => 6.,
-            Item::DiamondSword => 7.,
-            Item::IronPickaxe => 4.,
-            _ => 1.,
-        };
+        let base = self.inventory.main().info().map_or(1., |i| i.attack);
         base * (0.2 + scale * scale * 0.8)
     }
     pub fn reset_charge(&mut self, now: Instant) {
@@ -334,8 +306,29 @@ impl State {
             damage - self.last_damage
         };
         self.last_damage = damage;
+        let applied = if self.item_config.policy != InventoryPolicy::ArenaKit {
+            // Vanilla wears armor before reading attributes, so a broken piece
+            // no longer mitigates this hit. Raw iframe comparison stays intact.
+            self.inventory.hurt_armor(applied);
+            let (armor, toughness) = self.inventory.armor();
+            crate::inventory::after_armor(applied, armor, toughness)
+        } else {
+            applied
+        };
         self.health = (self.health - applied).max(0.);
         self.dead = self.health == 0.;
+        if self.dead {
+            self.mining = None;
+            if !self.pending_commit {
+                self.pending_block = false;
+            }
+            self.delayed_block.clear();
+        }
+        if self.dead && self.item_config.policy == InventoryPolicy::ItemsClear {
+            self.inventory.slots.fill(Item::Empty);
+            self.inventory.cursor = Item::Empty;
+            self.inventory.changed();
+        }
         Some((applied, fresh))
     }
     pub fn reset(&mut self, now: Instant, spawn: [f64; 3]) {
@@ -346,13 +339,22 @@ impl State {
         let mode = self.mode;
         let trace = self.trace;
         let epoch = self.origin;
+        let item_config = self.item_config;
+        let account = self.account.clone();
+        let inventory = self.inventory.clone();
         *self = Self::new(now, spawn);
         self.notices = notices;
         self.terrain = terrain;
         self.blocks = blocks;
         self.combat_enabled = combat_enabled;
         self.mode = mode;
-        if self.blocks.is_some() {
+        self.item_config = item_config;
+        self.account = account;
+        if item_config.policy == InventoryPolicy::ItemsKeep {
+            self.inventory = inventory;
+        } else if item_config.policy == InventoryPolicy::ItemsClear {
+            self.inventory.slots.fill(Item::Empty);
+        } else if self.blocks.is_some() {
             self.build_kit();
         }
         self.trace = trace;
@@ -435,6 +437,7 @@ impl State {
     }
     pub fn reposition(&mut self, now: Instant, spawn: [f64; 3]) {
         self.mining = None;
+        self.delayed_block.clear();
         self.velocity = [0.; 3];
         self.motion_y = spawn[1];
         self.motion_ground = self
@@ -613,6 +616,16 @@ impl AttackKind {
 }
 #[derive(Debug)]
 pub enum Delivery {
+    Charged {
+        payload: Box<Delivery>,
+        charge: PacketCharge,
+    },
+    Batch(Vec<Delivery>),
+    Items {
+        world: smolmc_world::WorldId,
+        visible: Arc<[i32]>,
+        packets: Arc<[Vec<u8>]>,
+    },
     TerrainCommitted {
         at: Instant,
         world: smolmc_world::WorldHandle,
@@ -637,11 +650,53 @@ impl Delivery {
     }
 }
 pub const QUEUE: usize = 32;
+#[derive(Debug)]
+pub struct PacketCharge {
+    local: Arc<std::sync::atomic::AtomicUsize>,
+    shared: Arc<std::sync::atomic::AtomicUsize>,
+    bytes: usize,
+}
+impl PacketCharge {
+    pub(crate) fn reserve(
+        local: Arc<std::sync::atomic::AtomicUsize>,
+        shared: Arc<std::sync::atomic::AtomicUsize>,
+        bytes: usize,
+    ) -> Option<Self> {
+        use std::sync::atomic::Ordering::Relaxed;
+        local
+            .try_update(Relaxed, Relaxed, |n| {
+                n.checked_add(bytes).filter(|n| *n <= 128 * 1024)
+            })
+            .ok()?;
+        if shared
+            .try_update(Relaxed, Relaxed, |n| {
+                n.checked_add(bytes).filter(|n| *n <= 8 * 1024 * 1024)
+            })
+            .is_err()
+        {
+            local.fetch_sub(bytes, Relaxed);
+            return None;
+        }
+        Some(Self {
+            local,
+            shared,
+            bytes,
+        })
+    }
+}
+impl Drop for PacketCharge {
+    fn drop(&mut self) {
+        use std::sync::atomic::Ordering::Relaxed;
+        self.local.fetch_sub(self.bytes, Relaxed);
+        self.shared.fetch_sub(self.bytes, Relaxed);
+    }
+}
 pub const ACTION_WINDOW: Duration = Duration::from_millis(50);
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use smolmc_protocol_777::pvp::Action;
     #[test]
     fn combat_sender_budget_has_bounded_burst_and_refills_without_a_timer() {
         let now = Instant::now();
@@ -800,7 +855,7 @@ mod tests {
         );
     }
     #[test]
-    fn authoritative_inventory_pickup_shift_swap_and_stale_rejection() {
+    fn authoritative_inventory_pickup_shift_swap_and_invalid_revision_rejection() {
         let mut inv = Inventory::default();
         assert_eq!(inv.main(), Item::IronSword);
         assert_eq!(inv.off(), Item::Empty);
@@ -809,7 +864,7 @@ mod tests {
         assert_eq!(inv.off(), Item::IronSword);
         let before = inv.slots;
         assert!(!inv.apply(&Action::Click {
-            state: 0,
+            state: -1,
             slot: 9,
             button: 0,
             kind: 0

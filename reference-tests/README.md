@@ -8,6 +8,7 @@ dependencies of Rust or the standalone Java SDK.
 python3 scripts/check_protocol777_ids.py --reference unz
 python3 scripts/check_reference_packets.py --minecraft-dir '/path/to/minecraft'
 python3 scripts/check_classic1194_reference.py
+python3 scripts/check_items777_reference.py
 ```
 
 The first check pins identifier facts from the private source inventory, including
@@ -33,3 +34,12 @@ comparisons are not claimed as current evidence.
 The user separately tested two real clients and accepted the final profile. See
 the M3 engineering/protocol reports for the deliberate ground-contact policy,
 reference scope, failure history and validation limits.
+
+The M4B item check invokes the installed 26.3 client's actual codecs, registries,
+CombatRules, durability transitions and primitive knockback method. It compares
+Rust vectors for component inventories, item spawn/metadata, equipment/attributes,
+collection, movement/removal, 72 armor outputs and 12 resistance vectors. Original
+`Items777Catalog.java` and the generators produce the bounded item/loot catalog
+from private operator inputs. See `docs/M4B_PROTOCOL_EVIDENCE.md` for provenance,
+commands and limits. This does not execute the full loot engine, server tick,
+authentication or GUI; actual user client observations are separate evidence.

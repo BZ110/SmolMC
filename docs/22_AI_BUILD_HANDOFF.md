@@ -5,20 +5,23 @@
 
 ## Current authority
 
-M4A imported arena terrain and interactions are implemented and user-accepted.
-Checkpoint `m4a-before` preserves accepted M3 `3f83f7d`; final checkpoint
-`m4a-validated` records implementation/evidence. Read the M4A engineering,
-terrain-contract, protocol/security reports and ADR-010. No M4B, general survival,
-plugin ecosystem, Bukkit/Paper compatibility or M5 is authorized. Stop after M4A.
+M4B is complete, user-accepted and validated at `m4b-validated`. Accepted M4A
+`d6371cc` / `m4a-validated` is retained by rollback checkpoint `m4b-before`.
+Native counted items, bounded dropped entities/loot, durability and armor are
+implemented. The user confirmed grass/Netherite corrections, then reported rapid
+mining/placement and armor-menu rejection. The final reconciliation fixes passed
+focused regressions and were accepted after restart: “Seems good.” Read ADR-011
+and the M4B engineering/protocol/security reports for exact scope, raw platform
+logs, independent reference checks and short resource measurements.
 
-Preserve immutable imported/virtual templates and encoded packets, sparse block/
-light COW, transaction/generation checks, world isolation, accepted M3 classic PvP,
-fair reliable replication and optional Java schema 1.0/1.1/1.2 subsets. No unsafe,
-per-world/player ticking worker, full physics, fluid/redstone or persistence work.
-The explicit removal import mode is lossy; never claim arbitrary map fidelity.
-Held mining was specifically added by user clarification; drops and durability
-remain deferred. User acceptance provenance and final source/binary hashes are
-recorded separately; do not substitute fixtures for GUI evidence.
+Preserve immutable templates/encoded packets, sparse COW, world generations,
+auth/crypto, bounded reliable payloads, optional Java and accepted unarmored M3
+knockback/contact equations. Explicit 26.3 Netherite resistance is authorized.
+SDK 0.4.0/schema 1.3 adds read-only item snapshots; old 1.0/1.1/1.2 subsets remain.
+No full survival/crafting/enchanting/mobs/persistence/general physics/plugin host,
+Bukkit/Paper or later milestone. STOP: no next milestone is authorized.
+The user authorizes restarting only M4B on port 25568 when a new client check is
+ready; do not ask permission again. Source saves remain read-only.
 
 ## Milestone issue contract (copy into task ticket)
 - Title, rationale, and preconditions.

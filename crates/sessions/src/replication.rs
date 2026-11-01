@@ -28,6 +28,7 @@ use tokio::{
 };
 
 mod combat;
+pub(crate) mod items;
 
 const COMMAND_CAPACITY: usize = MAX_PLAYERS * 4;
 const CHAT_CAPACITY: usize = 32;
@@ -103,6 +104,14 @@ enum Command {
         source: ActionSource,
         damage_type: i32,
         at: Instant,
+    },
+    BlockComplete {
+        game: gameplay::Shared,
+        instance: WorldId,
+        entity: i32,
+        token: u64,
+        ok: bool,
+        outcome: items::Outcome,
     },
     Leave(WorldId, i32, u64),
     Stop,
@@ -188,12 +197,12 @@ impl Lease {
 impl Hub {
     pub fn start(metrics: Arc<Metrics>) -> Self {
         let (sender, receiver) = mpsc::channel(COMMAND_CAPACITY);
+        let mut directory = Directory::new(Arc::clone(&metrics));
+        directory.sender = Some(sender.clone());
         Self {
             sender,
             serial: AtomicU64::new(1),
-            task: Mutex::new(Some(tokio::spawn(
-                Directory::new(Arc::clone(&metrics)).run(receiver),
-            ))),
+            task: Mutex::new(Some(tokio::spawn(directory.run(receiver)))),
         }
     }
     #[cfg(test)]
@@ -265,12 +274,29 @@ impl Hub {
 /// a single instance, so all keys are `ChunkPos` and carry no instance id: an index can
 /// never see a peer in another world. The `metrics` Arc is shared with the hub (a clone
 /// of one allocation), so counters stay global while index logic stays per-instance.
+#[derive(Default)]
+struct CriticalEvents {
+    bytes: usize,
+    events: Vec<gameplay::Delivery>,
+}
 struct InstanceDir {
+    sender: Option<mpsc::Sender<Command>>,
+    block_deadlines: std::collections::BTreeSet<(Instant, i32)>,
+    block_keys: HashMap<i32, Instant>,
+    item_next: Instant,
     members: HashMap<i32, Member>,
     occupants: HashMap<ChunkPos, HashSet<i32>>,
     subscribers: HashMap<ChunkPos, HashSet<i32>>,
     fanout_credit: f64,
     fanout_at: Instant,
+    drops: items::Drops,
+    item_packets: HashMap<i32, Vec<Vec<u8>>>,
+    item_dirty: HashSet<i32>,
+    item_equipment: HashSet<i32>,
+    item_refill: HashSet<i32>,
+    critical_batch: std::cell::RefCell<Option<HashMap<i32, CriticalEvents>>>,
+    item_count: Arc<std::sync::atomic::AtomicUsize>,
+    reliable_bytes: Arc<std::sync::atomic::AtomicUsize>,
     metrics: Arc<Metrics>,
 }
 
@@ -278,9 +304,14 @@ struct InstanceDir {
 /// The `WorldId` in each command selects which `InstanceDir` handles it; a fully empty
 /// instance is dropped wholesale so its indices cannot be reused by another world.
 struct Directory {
+    sender: Option<mpsc::Sender<Command>>,
     fanout_credit: f64,
     fanout_at: Instant,
     instances: HashMap<WorldId, InstanceDir>,
+    item_count: Arc<std::sync::atomic::AtomicUsize>,
+    reliable_bytes: Arc<std::sync::atomic::AtomicUsize>,
+    item_due: std::collections::BTreeSet<(Instant, WorldId)>,
+    item_scheduled: HashMap<WorldId, Instant>,
     metrics: Arc<Metrics>,
 }
 impl Directory {
@@ -288,12 +319,30 @@ impl Directory {
         Self {
             fanout_credit: 8192.,
             fanout_at: Instant::now(),
+            sender: None,
             instances: HashMap::new(),
+            item_count: Arc::default(),
+            reliable_bytes: Arc::default(),
+            item_due: Default::default(),
+            item_scheduled: HashMap::new(),
             metrics,
         }
     }
     async fn run(mut self, mut receiver: mpsc::Receiver<Command>) {
-        'commands: while let Some(command) = receiver.recv().await {
+        'commands: loop {
+            let due = self.item_due.first().map(|e| e.0);
+            let command = tokio::select! {
+                command=receiver.recv()=>{let Some(c)=command else{break;};c},
+                _=async {if let Some(due)=due{tokio::time::sleep_until(due).await}else{std::future::pending::<()>().await}}=>{
+                    let now=Instant::now();
+                    if let Some((_,world))=self.item_due.pop_first(){
+                        self.item_scheduled.remove(&world);
+                        if let Some(index)=self.instances.get_mut(&world){index.critical_batch.replace(Some(HashMap::new()));index.process_block_deadlines(now);if now>=index.item_next{index.item_tick(now);index.item_next=now+std::time::Duration::from_millis(50);}index.flush_critical_batch();index.flush_items(world);}
+                        self.schedule_items(world);
+                    }
+                    tokio::task::yield_now().await;continue;
+                }
+            };
             let mut combat = matches!(&command, Command::Action { .. });
             if !self.command(command) {
                 break;
@@ -319,12 +368,34 @@ impl Directory {
         self.metrics.active_replicas.store(0, Relaxed);
         self.metrics.visible_edges.store(0, Relaxed);
     }
+    fn schedule_items(&mut self, world: WorldId) {
+        let desired = self.instances.get(&world).and_then(|i| {
+            let items = (!i.drops.entities.is_empty()).then_some(i.item_next);
+            let block = i.block_deadlines.first().map(|e| e.0);
+            match (items, block) {
+                (Some(a), Some(b)) => Some(a.min(b)),
+                (a, b) => a.or(b),
+            }
+        });
+        let old = self.item_scheduled.get(&world).copied();
+        if old == desired {
+            return;
+        }
+        if let Some(old) = self.item_scheduled.remove(&world) {
+            self.item_due.remove(&(old, world));
+        }
+        if let Some(due) = desired {
+            self.item_due.insert((due, world));
+            self.item_scheduled.insert(world, due);
+        }
+    }
     fn command(&mut self, command: Command) -> bool {
         let touched = match &command {
             Command::Join { instance, .. }
             | Command::Update { instance, .. }
             | Command::Chat { instance, .. }
-            | Command::Action { instance, .. } => Some(*instance),
+            | Command::Action { instance, .. }
+            | Command::BlockComplete { instance, .. } => Some(*instance),
             Command::Leave(instance, ..) => Some(*instance),
             Command::Stop => None,
         };
@@ -345,7 +416,11 @@ impl Directory {
                 let index = match self.instances.entry(instance) {
                     std::collections::hash_map::Entry::Occupied(o) => o.into_mut(),
                     std::collections::hash_map::Entry::Vacant(v) => {
-                        v.insert(InstanceDir::new(Arc::clone(&self.metrics)))
+                        let mut index = InstanceDir::new(Arc::clone(&self.metrics));
+                        index.item_count = Arc::clone(&self.item_count);
+                        index.reliable_bytes = Arc::clone(&self.reliable_bytes);
+                        index.sender = self.sender.clone();
+                        v.insert(index)
                     }
                 };
                 let _ = reply.send(index.join_with_game(entity, token, profile, pending, game));
@@ -395,7 +470,28 @@ impl Directory {
                 if let Some(index) = self.instances.get_mut(&instance)
                     && index.members.get(&entity).is_some_and(|m| m.token == token)
                 {
+                    index.critical_batch.replace(Some(HashMap::new()));
                     index.action(entity, action, source, damage_type);
+                    index.flush_critical_batch();
+                }
+            }
+            Command::BlockComplete {
+                instance,
+                entity,
+                token,
+                game,
+                ok,
+                outcome,
+            } => {
+                if items::complete_inventory(&game, ok, &outcome)
+                    && let Some(index) = self.instances.get_mut(&instance)
+                    && index.members.get(&entity).is_some_and(|m| m.token == token)
+                {
+                    index.critical_batch.replace(Some(HashMap::new()));
+                    index.block_committed(entity, ok, outcome);
+                    index.replay_deferred(entity);
+                    index.sync_block_deadline(entity);
+                    index.flush_critical_batch();
                 }
             }
             Command::Leave(instance, entity, token) => {
@@ -414,6 +510,15 @@ impl Directory {
                 .is_some_and(|d| d.members.is_empty())
         {
             self.instances.remove(&instance);
+            if let Some(due) = self.item_scheduled.remove(&instance) {
+                self.item_due.remove(&(due, instance));
+            }
+        }
+        if let Some(instance) = touched {
+            if let Some(index) = self.instances.get_mut(&instance) {
+                index.flush_items(instance);
+            }
+            self.schedule_items(instance);
         }
         if self.instances.is_empty() {
             self.instances = HashMap::new();
@@ -432,6 +537,9 @@ struct Member {
     wake: Arc<Notify>,
     closed: watch::Sender<bool>,
     visible: HashSet<i32>,
+    item_visible: HashSet<i32>,
+    reliable_bytes: Arc<std::sync::atomic::AtomicUsize>,
+    deferred: std::collections::VecDeque<(pvp::Action, ActionSource, i32)>,
     viewers: HashSet<i32>,
     chat_credit: f64,
     chat_at: Instant,
@@ -442,9 +550,21 @@ struct Member {
 impl InstanceDir {
     fn new(metrics: Arc<Metrics>) -> Self {
         Self {
+            sender: None,
+            block_deadlines: Default::default(),
+            block_keys: HashMap::new(),
+            item_next: Instant::now() + std::time::Duration::from_millis(50),
             members: HashMap::new(),
             occupants: HashMap::new(),
             subscribers: HashMap::new(),
+            drops: items::Drops::default(),
+            item_packets: HashMap::new(),
+            item_dirty: HashSet::new(),
+            item_equipment: HashSet::new(),
+            item_refill: HashSet::new(),
+            critical_batch: std::cell::RefCell::new(None),
+            item_count: Arc::default(),
+            reliable_bytes: Arc::default(),
             fanout_credit: 8192.,
             fanout_at: Instant::now(),
             metrics,
@@ -507,6 +627,9 @@ impl InstanceDir {
                 wake: Arc::clone(&wake),
                 closed,
                 visible: HashSet::new(),
+                item_visible: HashSet::new(),
+                reliable_bytes: Arc::default(),
+                deferred: Default::default(),
                 viewers: HashSet::new(),
                 chat_credit: 3.,
                 chat_at: Instant::now(),
@@ -585,6 +708,7 @@ impl InstanceDir {
             self.index_add(id, next);
         }
         if changed_view {
+            self.item_view(id);
             self.reconcile(id);
         }
         if changed_chunk {
@@ -722,6 +846,18 @@ impl InstanceDir {
         let old = *member.state.borrow();
         self.index_remove(id, old);
         let member = self.members.remove(&id).unwrap();
+        for item in &member.item_visible {
+            if let Some(d) = self.drops.entities.get_mut(item) {
+                d.viewers.remove(&id);
+            }
+        }
+        self.item_packets.remove(&id);
+        self.item_dirty.remove(&id);
+        self.item_equipment.remove(&id);
+        self.item_refill.remove(&id);
+        if let Some(at) = self.block_keys.remove(&id) {
+            self.block_deadlines.remove(&(at, id));
+        }
         for peer in &member.visible {
             if let Some(m) = self.members.get_mut(peer) {
                 m.viewers.remove(&id);
@@ -952,10 +1088,7 @@ impl View {
                 if let Some(game) = &peer.game {
                     let (equipment, health) = {
                         let g = game.lock().unwrap();
-                        (
-                            pvp::equipment(id, g.inventory.main(), g.inventory.off()),
-                            pvp::metadata(id, g.health),
-                        )
+                        (g.inventory.equipment(id), pvp::metadata(id, g.health))
                     };
                     output.send(&equipment).await?;
                     output.send(&health).await?;

@@ -5,6 +5,7 @@ pub struct StateInfo {
     pub id: u16,
     pub hardness: f32,
     pub requires_tool: bool,
+    pub replaceable: bool,
     pub pickaxe: bool,
     pub iron_correct: bool,
     pub sword_speed: f32,

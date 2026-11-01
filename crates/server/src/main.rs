@@ -38,6 +38,7 @@ async fn run() -> io::Result<()> {
     let mut convert = false;
     let mut import_bounds = None;
     let mut explicit_spawn = false;
+    let mut items = smolmc_sessions::gameplay::ItemConfig::default();
     let mut pvp = smolmc_sessions::gameplay::Config::default();
     let mut bridge_dir = None;
     let mut bridge_access = smolmc_bridge::Access::Observe;
@@ -45,6 +46,35 @@ async fn run() -> io::Result<()> {
     let mut args = std::env::args().skip(1);
     while let Some(arg) = args.next() {
         match arg.as_str() {
+            "--inventory-policy" => {
+                items.policy = match args.next().as_deref() {
+                    Some("arena-kit") => smolmc_sessions::gameplay::InventoryPolicy::ArenaKit,
+                    Some("items-keep") => smolmc_sessions::gameplay::InventoryPolicy::ItemsKeep,
+                    Some("items-clear") => smolmc_sessions::gameplay::InventoryPolicy::ItemsClear,
+                    _ => {
+                        return Err(io::Error::new(
+                            io::ErrorKind::InvalidInput,
+                            "--inventory-policy needs arena-kit, items-keep or items-clear",
+                        ));
+                    }
+                };
+            }
+            "--max-items-per-world" | "--max-items-shared" => {
+                let n = args
+                    .next()
+                    .and_then(|n| n.parse::<usize>().ok())
+                    .ok_or_else(|| {
+                        io::Error::new(
+                            io::ErrorKind::InvalidInput,
+                            "item budget needs positive integer",
+                        )
+                    })?;
+                if arg == "--max-items-per-world" {
+                    items.per_world = n;
+                } else {
+                    items.shared = n;
+                }
+            }
             "--pvp" => {
                 pvp.enabled = match args.next().as_deref() {
                     Some("on") => true,
@@ -199,7 +229,7 @@ async fn run() -> io::Result<()> {
             }
             "--help" | "-h" => {
                 println!(
-                    "smolmc [--pvp on|off] [--arena-spawn X,Y,Z] [--import-world PATH --import-bounds MIN_X,MIN_Y,MIN_Z,MAX_X,MAX_Y,MAX_Z] [--import-remove-unsupported] [--bridge-dir NEW_PATH] [--bridge-access observe|control] [--bind IP:PORT] [--instances N] [--world-profile build|editable|read-only] [--trace-connections] [--max-connections N] [--connection-rate N] [--per-ip-rate N]\nM4A: Minecraft 26.3 protocol 777, online login, isolated arenas, optional PvP, bounded imported terrain and build interactions. Optional Java control bridge.\nJoins route round-robin across N isolated arenas (default 1). Imports are strict unless unsupported-state removal is explicitly enabled. Mining drops and durability are deferred.\nDefaults: loopback 127.0.0.1:25565, 512 connections, 256 accepts/s, 32 accepts/IP/s. Ctrl-C or SIGTERM stops all connections."
+                    "smolmc [--inventory-policy arena-kit|items-keep|items-clear] [--max-items-per-world N] [--max-items-shared N] [--pvp on|off] [--arena-spawn X,Y,Z] [--import-world PATH --import-bounds MIN_X,MIN_Y,MIN_Z,MAX_X,MAX_Y,MAX_Z] [--import-remove-unsupported] [--bridge-dir NEW_PATH] [--bridge-access observe|control] [--bind IP:PORT] [--instances N] [--world-profile build|editable|read-only] [--trace-connections] [--max-connections N] [--connection-rate N] [--per-ip-rate N]\nM4B: Minecraft 26.3 protocol 777, online login, isolated arenas, optional PvP, bounded imported terrain and build interactions. Optional Java control bridge.\nJoins route round-robin across N isolated arenas (default 1). Imports are strict unless unsupported-state removal is explicitly enabled. Item drops/durability/armor require explicit items-keep or items-clear inventory policy.\nDefaults: loopback 127.0.0.1:25565, 512 connections, 256 accepts/s, 32 accepts/IP/s. Ctrl-C or SIGTERM stops all connections."
                 );
                 return Ok(());
             }
@@ -256,6 +286,7 @@ async fn run() -> io::Result<()> {
         ));
     }
     service.configure_pvp(pvp)?;
+    service.configure_items(items)?;
     let listener = TcpListener::bind(bind).await?;
     let bridge = bridge_dir
         .as_ref()
@@ -265,7 +296,7 @@ async fn run() -> io::Result<()> {
         .transpose()?;
     let metrics = Arc::new(Metrics::default());
     eprintln!(
-        "ready address={} minecraft=26.3 protocol=777 stage=M4A-Terrain online=true max_connections={} registry_bytes={} chunk_template_bytes={}",
+        "ready address={} minecraft=26.3 protocol=777 stage=M4B-Items online=true max_connections={} registry_bytes={} chunk_template_bytes={}",
         listener.local_addr()?,
         config.max_connections,
         service.registry_bytes(),

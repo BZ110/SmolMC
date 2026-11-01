@@ -27,7 +27,7 @@ use zeroize::Zeroizing;
 const IO_TIMEOUT: Duration = Duration::from_secs(2);
 const PEERS: usize = 4;
 static NEXT_PEER: AtomicU64 = AtomicU64::new(1);
-pub const API_VERSION: &str = "0.3.0";
+pub const API_VERSION: &str = "0.4.0";
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Access {
     Observe,
@@ -275,10 +275,10 @@ async fn peer(socket: UnixStream, state: Arc<State>, owner: u64) -> io::Result<(
         write(&mut output, &failure(id, 0, 3, "authentication failed")).await?;
         return Err(invalid());
     }
-    if major != 1 || minor > 2 {
+    if major != 1 || minor > 3 {
         write(
             &mut output,
-            &failure(id, 0, 2, "requires bridge schema 1.0, 1.1 or 1.2"),
+            &failure(id, 0, 2, "requires bridge schema 1.0, 1.1, 1.2 or 1.3"),
         )
         .await?;
         return Err(invalid());
@@ -293,6 +293,7 @@ async fn peer(socket: UnixStream, state: Arc<State>, owner: u64) -> io::Result<(
         match minor {
             0 => "0.1.0",
             1 => "0.2.0",
+            2 => "0.3.0",
             _ => API_VERSION,
         },
     );
@@ -343,6 +344,14 @@ async fn peer(socket: UnixStream, state: Arc<State>, owner: u64) -> io::Result<(
                 continue;
             }
         };
+        if minor < 3 && op == 24 {
+            write(
+                &mut output,
+                &failure(id, op, 8, "requires bridge schema 1.3"),
+            )
+            .await?;
+            continue;
+        }
         if minor == 0
             && matches!(
                 request,
@@ -445,6 +454,7 @@ enum Request {
     Invoke(String),
     Worlds,
     Combat(i32, [u8; 16]),
+    Inventory(i32, [u8; 16]),
     TerrainRead(WorldHandle, Vec<[i32; 3]>),
     TerrainEdit(WorldHandle, Vec<([i32; 3], Material)>),
     Template,
@@ -511,6 +521,7 @@ impl Request {
             16 => Self::Unregister(r.string(32)?.to_owned()),
             17 => Self::Invoke(r.string(256)?.to_owned()),
             18 => Self::Worlds,
+            24 => Self::Inventory(r.i32()?, r.take(16)?.try_into().unwrap()),
             19 => Self::Combat(r.i32()?, r.take(16)?.try_into().unwrap()),
             20 => Self::Template,
             21 => Self::State(r.i32()?),
@@ -545,6 +556,7 @@ impl Request {
                 | Self::Unsubscribe
                 | Self::Worlds
                 | Self::Combat(..)
+                | Self::Inventory(..)
                 | Self::Template
                 | Self::State(..)
                 | Self::TerrainRead(..)
@@ -587,6 +599,21 @@ impl Request {
             }
             Self::TerrainEdit(..) => return Err(ControlError::InvalidRequest),
             Self::Combat(entity, uuid) => combat(&mut out, s.combat_snapshot(entity, uuid)?),
+            Self::Inventory(entity, uuid) => {
+                let inv = s.inventory_snapshot(entity, uuid)?;
+                out.extend(inv.revision.to_be_bytes());
+                out.push(inv.selected);
+                u16(&mut out, 46);
+                for item in inv.slots.into_iter().chain(std::iter::once(inv.cursor)) {
+                    out.extend(item.id().to_be_bytes());
+                    out.push(item.count());
+                    u16(&mut out, item.damage());
+                    u16(&mut out, item.info().map_or(0, |i| i.max_damage));
+                }
+                let (armor, toughness) = inv.armor();
+                out.extend(armor.to_be_bytes());
+                out.extend(toughness.to_be_bytes());
+            }
             Self::Default => world(&mut out, s.default_world()?),
             Self::Create(p) => world(&mut out, s.create_world_with_profile(p)?),
             Self::Clone(w) => world(&mut out, s.clone_world(w)?),

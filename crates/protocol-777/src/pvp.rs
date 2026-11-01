@@ -18,7 +18,9 @@ pub enum Action {
     Punch,
     Select(u8),
     Swap,
-    Drop,
+    Drop {
+        all: bool,
+    },
     Close,
     Release,
     Click {
@@ -173,7 +175,7 @@ pub fn decode(bytes: &[u8]) -> Result<Option<Action>, E> {
                     sequence,
                 },
                 7 => Action::Swap,
-                4 | 5 => Action::Drop,
+                4 | 5 => Action::Drop { all: action == 4 },
                 6 => Action::Release,
                 _ => return Ok(None),
             }
@@ -224,50 +226,7 @@ pub fn write_lp(out: &mut Encoder, v: [f64; 3]) {
         out.varint((scale >> 2) as i32);
     }
 }
-/// Only immutable default-component stacks (empty, iron sword, diamond sword).
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
-pub enum Item {
-    #[default]
-    Empty,
-    IronSword,
-    DiamondSword,
-    IronPickaxe,
-    Block {
-        state: i32,
-        item: i32,
-    },
-}
-impl Item {
-    pub fn speed_modifier(self) -> Option<f32> {
-        match self {
-            Self::IronSword | Self::DiamondSword => Some(-2.4),
-            Self::IronPickaxe => Some(-2.8),
-            _ => None,
-        }
-    }
-    pub fn sword(self) -> bool {
-        matches!(self, Self::IronSword | Self::DiamondSword)
-    }
-    pub fn id(self) -> i32 {
-        match self {
-            Self::Empty => 0,
-            Self::IronSword => 1045,
-            Self::DiamondSword => 1050,
-            Self::IronPickaxe => 1047,
-            Self::Block { item, .. } => item,
-        }
-    }
-}
-pub fn stack(out: &mut Encoder, item: Item) {
-    if item == Item::Empty {
-        out.varint(0);
-    } else {
-        out.varint(1);
-        out.varint(item.id());
-        out.varint(0);
-        out.varint(0);
-    }
-}
+pub use crate::items::{Item, stack};
 pub fn inventory(state: i32, slots: &[Item; 46], cursor: Item) -> Vec<u8> {
     let mut o = Encoder::new(0x12);
     o.varint(0);

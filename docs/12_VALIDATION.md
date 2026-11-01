@@ -1,5 +1,15 @@
 # 12 — Verification, conformance, adversarial and fault-injection plan
 
+**M4B implementation update (2026-10-30):** explicitly configured native item
+gameplay now adds counted/component inventory, bounded world-local drops,
+durability and armor. The existing directory owns item/interaction ordering;
+one shared deadline mechanism handles actual active work, with no inactive-world
+scan. Predictive clicks reconcile against Rust state; commit receipts preserve
+inventory effects across disconnect. See [M4B report](M4B_ENGINEERING_REPORT.md),
+[ADR-011](../decisions/ADR-011-m4b-authoritative-items.md) and
+[security/budgets](M4B_SECURITY_REVIEW.md). User-accepted and validated at `m4b-validated`; see the report for evidence and limits.
+
+
 **M4A implementation update (2026-10-30):** bounded imported templates, sparse
 block/light COW, local collision and held mining now extend the historical scope
 below. See [M4A contract](M4A_TERRAIN_CONTRACT.md), [M4A report](M4A_ENGINEERING_REPORT.md)

@@ -1,5 +1,15 @@
 # 21 — Threat model: public server, isolated tenants and Java plugins
 
+**M4B implementation update (2026-10-30):** explicitly configured native item
+gameplay now adds counted/component inventory, bounded world-local drops,
+durability and armor. The existing directory owns item/interaction ordering;
+one shared deadline mechanism handles actual active work, with no inactive-world
+scan. Predictive clicks reconcile against Rust state; commit receipts preserve
+inventory effects across disconnect. See [M4B report](M4B_ENGINEERING_REPORT.md),
+[ADR-011](../decisions/ADR-011-m4b-authoritative-items.md) and
+[security/budgets](M4B_SECURITY_REVIEW.md). User-accepted and validated at `m4b-validated`; see the report for evidence and limits.
+
+
 ## Security boundaries
 **Untrusted:** raw network clients, handshake hostname, player packets, user-imported templates, downloaded plugins, plugin IPC requests, externally accessible management endpoints. **Trusted only by configuration:** online Mojang session responses, explicitly authenticated Velocity proxy, operator-approved plugin signing/capabilities. In-process Rust native plugins share the core process trust boundary.
 

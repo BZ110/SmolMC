@@ -137,6 +137,16 @@ pub fn resolve(
     step: bool,
     mut block: impl FnMut([i32; 3]) -> Material,
 ) -> Option<Resolved> {
+    resolve_box(Aabb::player(pos, crouch), wanted, step, &mut block)
+}
+/// Shared static shape clipping for non-player entities, including 0.25m items.
+pub fn resolve_box(
+    b: Aabb,
+    wanted: [f64; 3],
+    step: bool,
+    mut block: impl FnMut([i32; 3]) -> Material,
+) -> Option<Resolved> {
+    let pos = b.min;
     if !pos
         .iter()
         .chain(&wanted)
@@ -144,7 +154,6 @@ pub fn resolve(
     {
         return None;
     }
-    let b = Aabb::player(pos, crouch);
     let lo: [i32; 3] = std::array::from_fn(|i| (b.min[i] + wanted[i].min(0.) - EPS).floor() as i32);
     let hi: [i32; 3] = std::array::from_fn(|i| {
         (b.max[i] + wanted[i].max(0.) + if i == 1 && step { 0.6 } else { EPS }).floor() as i32

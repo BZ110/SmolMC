@@ -21,7 +21,7 @@ public final class Terrain777Catalog {
         if (!state.getFluidState().isEmpty() || state.hasBlockEntity()) continue;
         if (state.getLightEmission()!=0) continue;
         var row=new LinkedHashMap<String,Object>();
-        row.put("hardness",state.getDestroySpeed(EmptyBlockGetter.INSTANCE,BlockPos.ZERO));row.put("requires_tool",state.requiresCorrectToolForDrops());row.put("block_id",BuiltInRegistries.BLOCK.getId(block));row.put("id",Block.getId(state)); row.put("name",name);
+        row.put("replaceable",state.canBeReplaced());row.put("hardness",state.getDestroySpeed(EmptyBlockGetter.INSTANCE,BlockPos.ZERO));row.put("requires_tool",state.requiresCorrectToolForDrops());row.put("block_id",BuiltInRegistries.BLOCK.getId(block));row.put("id",Block.getId(state)); row.put("name",name);
         var props=new TreeMap<String,String>();
         state.getValues().forEach(v->{String s=v.toString();int at=s.indexOf('=');props.put(s.substring(0,at),s.substring(at+1));});
         row.put("properties",props);row.put("solid",full);row.put("opacity",state.getLightDampening());
