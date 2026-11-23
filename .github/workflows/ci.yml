@@ -31,4 +31,7 @@ jobs:
       - name: Lint workspace
         run: cargo clippy --workspace --all-targets --locked -- -D warnings
       - name: Test workspace
-        run: cargo test --workspace --locked
+        # Keep lighting fixture contention within the existing interaction deadlines.
+        run: |
+          cargo test --workspace --locked \
+            --config 'profile.test.package.smolmc-world.opt-level=1' -- --test-threads=2
