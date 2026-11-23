@@ -41,5 +41,6 @@ jobs:
             terrain_java_sdk_controls_imported_worlds
       - name: Check bridge and listener recovery
         run: |
+          mkdir -p target/ci
           python3 scripts/check_m2c_faults.py --output target/ci/bridge-faults.json
           python3 scripts/check_listener_recovery.py --output target/ci/listener-recovery.json
