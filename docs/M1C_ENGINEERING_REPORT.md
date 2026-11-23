@@ -1,5 +1,7 @@
 # M1C engineering report — rendered stone and persistent flight
 
+Original capture filenames refer to the [local validation archive](../evidence/README.md).
+
 Date: 2026-10-29. Scope: **M1C only**, following AGENTS and roadmap order.
 M1A/M1B were accepted before this work. M1C is implemented and its documented
 gate passed. **Stop here: M1D, M2A, Java integration and later systems remain
@@ -14,7 +16,7 @@ The user's observation was: “It works ... 50+ blocks. flew. still connected.�
 They also opened the inventory screen; no inventory item manipulation is
 claimed. Visual evidence is user-reported, without a captured screenshot.
 
-The independent [server trace](../evidence/m1c-client-attempt3-server.log) records
+The independent server trace (`evidence/m1c-client-attempt3-server.log`) records
 one legitimate authentication, Configuration and Play entry, one confirmed
 teleport, **65 chunk sends / 40 unloads / 23 batch replies / 8 center changes /
 10 keepalive replies / 576 movements / 6 flight-state changes**. Final counters:
@@ -22,7 +24,7 @@ zero protocol errors, timeouts, task failures, active connections, active sessio
 and retained frame reservations. SIGTERM stopped the test server cleanly.
 Ten keepalive replies also corroborate sustained connection beyond a minute.
 
-[Client record](../evidence/m1c-vanilla-client-check.json) pins the successful
+Client record (`evidence/m1c-vanilla-client-check.json`) pins the successful
 binary SHA-256 to
 `5ea1081f273b0b9ff2aea4e2c0a54f426d6793b0a29a3507d217d2c05d4c258b`.
 The final release rebuild has the same hash. Only tests, sampling tooling and
@@ -121,7 +123,7 @@ it restores the immutable material and never applies edits.
 
 [M1C protocol ledger](M1C_PROTOCOL_EVIDENCE.md) contains packet IDs, complete
 field ordering, nested codecs, policy distinctions and remaining uncertainties.
-[57-path reference inventory](../evidence/m1c-protocol-sources.json) pins the
+57-path reference inventory (`evidence/m1c-protocol-sources.json`) pins the
 locally inspected exact-version reference. Public packet-wiki access was denied
 by robots, so no public field-level cross-check is claimed. No game source bodies
 or JSON/NBT assets are redistributed; identifier inventories from M1B remain.
@@ -146,12 +148,12 @@ time maps. No fallback packet layout or authentication bypass was introduced.
 
 ## Build and regression tests
 
-Final raw output: [m1c-checks.txt](../evidence/m1c-checks.txt).
+Final raw output: m1c-checks.txt (`evidence/m1c-checks.txt`).
 **All pass on macOS arm64:** `fmt --check`, `test --workspace --locked` (53 tests),
 `clippy --workspace --all-targets --locked -- -D warnings`, release build and CLI
 help. The package's pinned compiler is Rust 1.99.1. The successful M1C binary links
 Homebrew **OpenSSL 4.0.3** and macOS platform TLS; older M1B OpenSSL measurements
-are historical. See [environment/linkage record](../evidence/m1c-validation-environment.json).
+are historical. See environment/linkage record (`evidence/m1c-validation-environment.json`).
 
 | Test group | Count | Evidence covered |
 |---|---:|---|
@@ -173,7 +175,7 @@ assertion initially retained its received keepalive packet lease until test end;
 explicitly dropping that packet before the final accounting assertion fixed the
 test lifetime, without a production change.
 
-[Listener recovery](../evidence/m1c-listener-recovery.json) passes with child
+Listener recovery (`evidence/m1c-listener-recovery.json`) passes with child
 descriptor limit 32: three accept failures observed, established ping survives,
 fresh status succeeds after recovery, normal exit and no retained leases. This
 preserves the M1B fix for the reproduced listener-wide failure.
@@ -194,8 +196,8 @@ costs are not all represented by frame counters. MiB uses 1,048,576 bytes.
 
 ### Idle, connection load and recovery
 
-[Raw resource JSON](../evidence/m1c-connection-resources.json) and
-[server counters](../evidence/m1c-connection-resources.log) were generated using
+Raw resource JSON (`evidence/m1c-connection-resources.json`) and
+server counters (`evidence/m1c-connection-resources.log`) were generated using
 the existing M1B-named transport harness against the final M1C release. It raises
 global/per-IP admissions to 4096/s to exercise one loopback generator; defaults
 are unchanged. No successful accounts are fabricated or session-service load
@@ -230,7 +232,7 @@ These are loopback transport results, not 512 authenticated-player world results
 
 ### Real client
 
-[Client sampling JSON](../evidence/m1c-client-resources.json) contains 393 samples
+Client sampling JSON (`evidence/m1c-client-resources.json`) contains 393 samples
 over 84.793 seconds, approximately 0.2 seconds apart. The sampler attached after
 login/session startup, so **it does not measure the authentication peak**.
 Observed RSS was 14,768–14,928 KiB (**14.42–14.58 MiB**), observed threads two,
@@ -242,7 +244,7 @@ zero retained connection/session/frame leases after shutdown.
 
 ### Chunk microbenchmark
 
-[Three release runs](../evidence/m1c-chunk-profile.json) use the `chunks` example:
+Three release runs (`evidence/m1c-chunk-profile.json`) use the `chunks` example:
 100,000 coordinate encodes followed by 1,000 encodes+zlib operations per run.
 Shared-body construction: 16.8–33.8 microseconds. Assembly into reused scratch:
 **315–330ns/chunk**. Assembly+zlib: **10.415–10.503 microseconds/chunk**. Average

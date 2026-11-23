@@ -1,0 +1,13 @@
+{
+  "date_local": "2026-10-29",
+  "source": "User report in conversation; no new packet capture or credentials collected",
+  "acceptance": "M2A accepted",
+  "user_statement": "I have completed the real Minecraft 26.3 client verification for M2A. All requested tests passed.",
+  "specific_observations": [
+    "Started with --instances 2",
+    "One account joined World=1; another joined World=2",
+    "Accounts were separate",
+    "On relog an account joined World=1 and behaved like the same server"
+  ],
+  "limits": "Detailed live in-process switch steps and timings were not separately supplied; retain the broader user all-tests-passed assertion as user-reported evidence, not an independently captured trace."
+}

@@ -1,12 +1,14 @@
 # M2B protocol and client regression evidence
 
+Original capture filenames refer to the [local validation archive](../evidence/README.md).
+
 Date: 2026-10-29. Target remains Minecraft 26.3 / protocol 777.
 M2A is user-accepted; specific real-client observations are recorded in
 [the acceptance record](../evidence/m2a-stock-client-user-verification.json).
 No new account credentials, stock-client trace or visual recording was collected
 for M2B. No new wire layout is introduced or inferred.
 
-[Preservation hashes](../evidence/m2b-preservation.json) verify that auth, network,
+Preservation hashes (`evidence/m2b-preservation.json`) verify that auth, network,
 protocol codecs, chunk encoding and registry/tag inventories are byte-identical
 to Git tag `m2a-accepted`. Existing field/path evidence remains in the
 [M1C](M1C_PROTOCOL_EVIDENCE.md), [M1D](M1D_PROTOCOL_EVIDENCE.md) and
@@ -24,8 +26,8 @@ negative-coordinate override. Closing clients and destroying both worlds returns
 snapshot charges, connections, replicas, visible edges and frame leases to zero
 without protocol errors, timeouts or task failures.
 
-[Release wire output](../evidence/m2b-cloned-wire.txt) and complete
-[macOS](../evidence/m2b-tests.txt) / [Linux](../evidence/m2b-linux-tests.txt)
+Release wire output (`evidence/m2b-cloned-wire.txt`) and complete
+macOS (`evidence/m2b-tests.txt`) / Linux (`evidence/m2b-linux-tests.txt`)
 regressions record passing results. The retained M2A fixture additionally verifies
 live switching, unique teleport acknowledgements, removal of old peers/Tab/chunks,
 25 target chunks, scoped system chat and reset/destroy/stale-handle rejection.
@@ -46,5 +48,5 @@ simulation, inventory, survival or general template import is added.
 Engine `--world-profile` selects trusted world capabilities; it does not alter
 Minecraft Feature Flags or allow authentication to be disabled. A read-only
 profile still sends all protocol-required terrain/control packets and corrects
-unsupported client block actions. [Production CLI/status checks](../evidence/m2b-cli-check.json)
+unsupported client block actions. Production CLI/status checks (`evidence/m2b-cli-check.json`)
 verify two read-only worlds, unsupported-profile rejection and clean shutdown.

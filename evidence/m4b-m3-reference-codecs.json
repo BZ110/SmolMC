@@ -1,0 +1,32 @@
+{
+  "result": "PASS",
+  "version": "26.3",
+  "minecraft_jar_sha256": "4508d006323f24fa02876310c192d739af56516eb259000ac50f0909a68c9a2d",
+  "vector_sha256": "82f5ae55b5cbb57edfc1fe0c9fa6ea6e2be184c86d6b34e63d0b28b83b850e26",
+  "math_sha256": "f181a8b493669f44ab0ce95cab9a25a7ad5a4af4132f70f9e2859e1ac5017540",
+  "checks": [
+    "PASS actual 26.3 item IDs iron_sword=1045 diamond_sword=1050",
+    "PASS actual particle IDs sweep_attack=77 damage_indicator=14",
+    "PASS ClientboundCommandsPacket exact vanilla decode/re-encode",
+    "PASS ClientboundContainerSetContentPacket exact vanilla decode/re-encode",
+    "PASS ClientboundSetHealthPacket exact vanilla decode/re-encode",
+    "PASS ClientboundSetEquipmentPacket exact vanilla decode/re-encode",
+    "PASS ClientboundSwingAnimationPacket exact vanilla decode/re-encode",
+    "PASS ClientboundSetEntityMotionPacket exact vanilla decode/re-encode",
+    "PASS ClientboundSetEntityDataPacket exact vanilla decode/re-encode",
+    "PASS ClientboundHurtAnimationPacket exact vanilla decode/re-encode",
+    "PASS ClientboundEntityEventPacket exact vanilla decode/re-encode",
+    "PASS ClientboundPlayerCombatKillPacket exact vanilla decode/re-encode",
+    "PASS ClientboundRespawnPacket exact vanilla decode/re-encode",
+    "PASS ClientboundDamageEventPacket exact vanilla decode/re-encode",
+    "PASS ClientboundUpdateAttributesPacket exact vanilla decode/re-encode",
+    "PASS ClientboundAnimatePacket exact vanilla decode/re-encode",
+    "PASS ServerboundPlayerActionPacket vanilla off-hand action 7",
+    "PASS ClientboundSoundPacket exact vanilla decode/re-encode",
+    "PASS ClientboundLevelParticlesPacket exact vanilla decode/re-encode",
+    "PASS ClientboundLevelParticlesPacket exact vanilla decode/re-encode"
+  ],
+  "exit_code": 0,
+  "scope": "Actual installed vanilla codecs with locally initialized builtin/dynamic registries; no authentication, renderer or gameplay claim; no JAR/assets included. Each outbound vector decodes to its expected class, consumes exactly and re-encodes byte-for-byte. Off-hand action 7 independently decoded.",
+  "diagnostic": ""
+}

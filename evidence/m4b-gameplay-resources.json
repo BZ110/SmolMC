@@ -1,0 +1,147 @@
+{
+  "method": "Short macOS release item-owner microprofile and encrypted mining/input workloads.\nThe encrypted test PID includes its Rust server and Rust fixture clients; its CPU\nis inclusive, not a server-only capacity comparison. No JVM runs in these cases.\n",
+  "probe_sha256": "9f092662b05ffa6d16b14565a25de689f68f69ef73ac14080673f50abbb37ef9",
+  "runs": [
+    {
+      "test": "items_encrypted_mining_drop_pickup_equipment_armor_durability_and_isolation",
+      "result": "PASS",
+      "command": [
+        "target/release/deps/smolmc_sessions-19ea010d0d98ee83",
+        "m1d_probe::items_encrypted_mining_drop_pickup_equipment_armor_durability_and_isolation",
+        "--exact",
+        "--nocapture"
+      ],
+      "wall_seconds": 2.866345458,
+      "sampling_seconds": 2.799531708,
+      "cpu_one_core_percent": 3.5720259825683676,
+      "rss_kib": 19760,
+      "threads": 3,
+      "samples": 44,
+      "timing": {
+        "action_to_processing_us": {
+          "samples": 8,
+          "p50_us_upper": 8,
+          "p99_us_upper": 128
+        },
+        "block_commit_us": {
+          "samples": 2,
+          "p50_us_upper": 16384,
+          "p99_us_upper": 32768
+        },
+        "block_enqueue_to_write_us": {
+          "samples": 1,
+          "p50_us_upper": 32768,
+          "p99_us_upper": 32768
+        },
+        "collision_processing_us": {
+          "samples": 1,
+          "p50_us_upper": 16,
+          "p99_us_upper": 16
+        },
+        "combat_event_to_write_us": {
+          "samples": 30,
+          "p50_us_upper": 64,
+          "p99_us_upper": 256
+        },
+        "directory_us": {
+          "samples": 22,
+          "p50_us_upper": 8,
+          "p99_us_upper": 32
+        },
+        "flush_us": {
+          "samples": 54,
+          "p50_us_upper": 1,
+          "p99_us_upper": 32
+        },
+        "publish_to_write_us_sampled": {
+          "samples": 0,
+          "p50_us_upper": null,
+          "p99_us_upper": null
+        }
+      },
+      "scope": "Inclusive Rust encrypted server + fixture-client PID; no JVM. Log2 histogram bounds are server processing/write timings, not input/RTT/render latency."
+    },
+    {
+      "test": "pipelined_placement_mining_early_finish_and_armor_clicks_reconcile",
+      "result": "PASS",
+      "command": [
+        "target/release/deps/smolmc_sessions-19ea010d0d98ee83",
+        "m1d_probe::pipelined_placement_mining_early_finish_and_armor_clicks_reconcile",
+        "--exact",
+        "--nocapture"
+      ],
+      "wall_seconds": 1.2965236660000001,
+      "sampling_seconds": 1.232288333,
+      "cpu_one_core_percent": 9.737980697087393,
+      "rss_kib": 19392,
+      "threads": 3,
+      "samples": 20,
+      "timing": {
+        "action_to_processing_us": {
+          "samples": 14,
+          "p50_us_upper": 32,
+          "p99_us_upper": 256
+        },
+        "block_commit_us": {
+          "samples": 6,
+          "p50_us_upper": 16384,
+          "p99_us_upper": 32768
+        },
+        "block_enqueue_to_write_us": {
+          "samples": 5,
+          "p50_us_upper": 16384,
+          "p99_us_upper": 32768
+        },
+        "collision_processing_us": {
+          "samples": 0,
+          "p50_us_upper": null,
+          "p99_us_upper": null
+        },
+        "combat_event_to_write_us": {
+          "samples": 32,
+          "p50_us_upper": 32,
+          "p99_us_upper": 256
+        },
+        "directory_us": {
+          "samples": 14,
+          "p50_us_upper": 8,
+          "p99_us_upper": 16
+        },
+        "flush_us": {
+          "samples": 38,
+          "p50_us_upper": 1,
+          "p99_us_upper": 16
+        },
+        "publish_to_write_us_sampled": {
+          "samples": 0,
+          "p50_us_upper": null,
+          "p99_us_upper": null
+        }
+      },
+      "scope": "Inclusive Rust encrypted server + fixture-client PID; no JVM. Log2 histogram bounds are server processing/write timings, not input/RTT/render latency."
+    }
+  ],
+  "item_owner": {
+    "baseline_rss_kib": 7456,
+    "merge_conserved_items": 1000,
+    "method": "Release in-process item owner microprobe: one active viewer, default budgets, real spatial merge/pickup and bounded queue drains; no socket encryption/client rendering. RSS is whole test-process KiB; allocation/page granularity applies. 100 settled processing passes per size, no sleep or idle CPU claim.",
+    "pickup_1000_processing_us": 181.167,
+    "pickup_conserved_items": 1000,
+    "remaining_merged_entities": 16,
+    "rows": [
+      {
+        "increment_from_baseline_kib": 640,
+        "items": 100,
+        "rss_kib": 8096,
+        "settled_tick_mean_us": 11.13875
+      },
+      {
+        "increment_from_baseline_kib": 1488,
+        "items": 1000,
+        "rss_kib": 8944,
+        "settled_tick_mean_us": 112.76958
+      }
+    ],
+    "spawn_and_merge_1000_us": 1228.958
+  }
+}

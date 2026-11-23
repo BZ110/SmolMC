@@ -1,5 +1,7 @@
 # Stage 1 implementation and verification report
 
+Original capture filenames refer to the [local validation archive](../evidence/README.md).
+
 Date: 2026-10-29 (America/Toronto)  
 Scope: **M1A only**, the first implementation stage of `13_ROADMAP.md`  
 Result: **Implemented and validated. Stop before M1B.**
@@ -26,7 +28,7 @@ dependency impact, compatibility and rollback.
 ## Source evidence
 
 See [packet provenance](STAGE1_PROTOCOL_EVIDENCE.md) and the hash inventory in
-[`evidence/protocol-sources.json`](../evidence/protocol-sources.json). Fields were
+`evidence/protocol-sources.json` (`evidence/protocol-sources.json`). Fields were
 verified against targeted supplied reference classes, then exercised with
 independent TCP fixtures and the stock 26.3 client. Public version metadata was
 cross-checked; unavailable wiki/schema sources are explicitly recorded as gaps.
@@ -50,9 +52,9 @@ No proprietary source or assets were translated or copied into deliverables.
 There are **19 automated tests**: six codec tests, three runtime unit tests and
 ten loopback integration tests. The malformed-input corpus is deterministic
 smoke coverage, not a coverage-guided fuzz campaign or proof of DoS resistance.
-Raw command output is in [`stage1-checks.txt`](../evidence/stage1-checks.txt).
+Raw command output is in `stage1-checks.txt` (`evidence/stage1-checks.txt`).
 Manual observations and their provenance are in
-[`vanilla-client-check.json`](../evidence/vanilla-client-check.json).
+`vanilla-client-check.json` (`evidence/vanilla-client-check.json`).
 
 Commands (normal Cargo can replace the project-local helper):
 
@@ -76,8 +78,8 @@ One short run on Apple M5 Pro, 18 logical CPUs, macOS 27.0.1 arm64; Rust 1.99.1;
 release profile, default server limits, loopback, no gameplay. Git revision: N/A,
 workspace was supplied without a Git repository. The 913,936-byte release binary
 was measured by `scripts/measure_stage1.py`. Full values and methodology are in
-[`stage1-resources.json`](../evidence/stage1-resources.json), with final counters
-in [`stage1-resources.log`](../evidence/stage1-resources.log).
+`stage1-resources.json` (`evidence/stage1-resources.json`), with final counters
+in `stage1-resources.log` (`evidence/stage1-resources.log`).
 
 | Point | Resident set (KiB) | Cumulative process CPU (s) | OS threads |
 |---|---:|---:|---:|

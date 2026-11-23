@@ -1,0 +1,12 @@
+{
+  "result": "PASS",
+  "reference": "Paper 1.19.4 build 550 Mojang-mapped",
+  "jar_sha256": "3959581eb0433f49e9f9fe7bda3a8f60511dccfb17105cb6467cfbb71cb34839",
+  "corpus_sha256": "f181a8b493669f44ab0ce95cab9a25a7ad5a4af4132f70f9e2859e1ac5017540",
+  "checks": [
+    "PASS actual Paper 1.19.4 build 550: 16 Mth yaw vectors and 6 velocity packet quantization vectors"
+  ],
+  "scope": "Actual historical Mth and velocity packet implementation only. Knockback equations independently inspected in hash-pinned private vanilla/Paper source. Grounded-contact settling is explicit local policy, not a claim of bitwise Paper server simulation.",
+  "exit_code": 0,
+  "diagnostic": ""
+}

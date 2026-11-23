@@ -1,0 +1,10 @@
+{
+  "result": "PASS",
+  "checks": [
+    "PASS actual 26.3 mechanics: 48 tool/hardness/airborne mining vectors and 72 full-block collision vectors"
+  ],
+  "corpus_sha256": "e2fe512019ac00d4a32f41166f7060cb9fa72a13d8bef2539f8f7be51bb03b9f",
+  "jar_sha256": "4508d006323f24fa02876310c192d739af56516eb259000ac50f0909a68c9a2d",
+  "scope": "Actual 26.3 mining progress with real item components/tag memberships/ground state, and actual entity shape clipping; 48 mining and 72 full-block collision vectors. Original flat level does not simulate all vanilla world/tick services.",
+  "diagnostic": ""
+}

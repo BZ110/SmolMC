@@ -1,5 +1,7 @@
 # M2A engineering report — explicit isolated instances
 
+Original capture filenames refer to the [local validation archive](../evidence/README.md).
+
 Date: **2026-10-29, America/Toronto**. The user explicitly authorized completing
 M2A and superseded the outdated M1D-only boundary. M2B is now authorized; M2C and later remain unauthorized.
 
@@ -28,7 +30,7 @@ tokens guard update/chat/leave. No task, thread, tick or timer per world. Truste
 lifecycle/admin locks never cover socket I/O, encoding or ordinary movement.
 
 Auth/network/protocol/chunk sources, Cargo.toml and Cargo.lock are **byte-identical
-to final M1D**, checked in [preservation evidence](../evidence/m2a-m1d-preservation.json).
+to final M1D**, checked in preservation evidence (`evidence/m2a-m1d-preservation.json`).
 Shared terrain remains 35,956 bytes plus one reusable 35,965-byte scratch per Play
 session. Dirty 50ms publish/flush, coalesced latest ingress, bounded batching,
 reserved leave, frame/auth/admission budgets and connection-local ingress remain.
@@ -107,12 +109,12 @@ no unsafe Rust, JVM, persistence, inventory, survival or M2B feature resolver.
 
 ## Measurable acceptance tests
 
-[Full regression output](../evidence/m2a-tests.txt): **76 passed, 0 failed; one
+Full regression output (`evidence/m2a-tests.txt`): **76 passed, 0 failed; one
 resource probe ignored in ordinary tests and explicitly run below**. Final macOS
-arm64 checks pass: [Clippy with warnings denied](../evidence/m2a-clippy.txt),
-[formatting](../evidence/m2a-fmt.txt), [release binary](../evidence/m2a-release-build.txt),
-[examples](../evidence/m2a-examples-build.txt) and
-[release test executable](../evidence/m2a-probe-build.txt).
+arm64 checks pass: Clippy with warnings denied (`evidence/m2a-clippy.txt`),
+formatting (`evidence/m2a-fmt.txt`), release binary (`evidence/m2a-release-build.txt`),
+examples (`evidence/m2a-examples-build.txt`) and
+release test executable (`evidence/m2a-probe-build.txt`).
 
 | Group | Passing tests |
 |---|---:|
@@ -137,7 +139,7 @@ negative-coordinate edit is replayed after A switches to B. A receives two uniqu
 teleports, 25 unloads and 50 total chunks; A then sees B/D, C nobody, B sees A/D.
 Occupied reset/destroy are rejected. Closing all clients permits reset/destroy;
 stale handles fail, and active connections/replicas/edges/frame leases return to
-zero without protocol errors/timeouts/task failures. The same switch fixture also passes in the [release test executable](../evidence/m2a-four-client-wire.txt). Separate tests abort a
+zero without protocol errors/timeouts/task failures. The same switch fixture also passes in the release test executable (`evidence/m2a-four-client-wire.txt`). Separate tests abort a
 membership task and prove release, and use Weak references to prove snapshots
 are freed on empty-world reset/destroy. This is stronger than inferring cleanup
 from RSS alone, but not proof of every allocation or long-term leak freedom.
@@ -154,22 +156,22 @@ measurement scripts set up both processes and invoke `--ignored --exact`.
 
 It was explicitly run for **1/32/128/256 players for 20 seconds after spawn**, and
 five further rounds of 32 players for three seconds against one retained server.
-Every run passes. Evidence: [active load](../evidence/m2a-active-play.json) and
-[active churn](../evidence/m2a-active-churn.json), with raw logs linked by each JSON.
+Every run passes. Evidence: active load (`evidence/m2a-active-play.json`) and
+active churn (`evidence/m2a-active-churn.json`), with raw logs linked by each JSON.
 No synthetic fixture sends Mojang/session requests or measures real-account capacity.
 
 ## Resource profile: measured results, not targets
 
 Host: Apple M5 Pro, 18 logical CPUs, macOS 27.0.1 arm64, Rust/Cargo 1.99.1,
-OpenSSL 4 linkage. [Environment/binary hashes](../evidence/m2a-validation-environment.json)
-and [source hashes](../evidence/m2a-implementation-sha256.txt) pin this run.
+OpenSSL 4 linkage. Environment/binary hashes (`evidence/m2a-validation-environment.json`)
+and source hashes (`evidence/m2a-implementation-sha256.txt`) pin this run.
 CPU is percent of one core from process CPU-time delta / wall time; `ps` resolution
 is 0.01s. RSS is process resident memory, not allocator live bytes. Shared host;
 no core affinity, statistical confidence intervals or latency guarantee.
 
 ### Increasing empty instances and lifecycle churn
 
-The [world-resource sampler](../evidence/m2a-world-resources.json) controls a separate
+The world-resource sampler (`evidence/m2a-world-resources.json`) controls a separate
 release example using the real Service baseline (auth client/registries/shared
 stone included), without a listener, clients or replication directory. It measures
 0/1/10/100/1000/4096 worlds with three-second idle windows, destroys them, then
@@ -177,8 +179,8 @@ runs three 10,000-world create/edit/reset/destroy batches in the same process.
 The final run keeps the async executor active while one fixed helper thread waits
 for controller stdin. Earlier runs blocked the executor and therefore cannot
 substantiate idle executor CPU behavior; their ownership assertions passed, but
-those CPU results are superseded. Both [initial evidence](../evidence/m2a-world-resources-initial.json)
-and [the second blocked-executor run](../evidence/m2a-world-resources-blocked-executor.json)
+those CPU results are superseded. Both initial evidence (`evidence/m2a-world-resources-initial.json`)
+and the second blocked-executor run (`evidence/m2a-world-resources-blocked-executor.json`)
 are retained. The corrected run follows all regression and active/transport work;
 only its measurements appear below.
 
@@ -238,17 +240,17 @@ leak-free claim. All rounds have zero lost clients and final leases/counters zer
 
 ### Transport/failure and chunk regression profiles
 
-[Production connection profile](../evidence/m2a-connection-resources.json): idle
+Production connection profile (`evidence/m2a-connection-resources.json`): idle
 10,016 KiB, 512 partial sockets 15,216 KiB, final worker-retired idle 15,520 KiB;
 OS peak 15,568 KiB; total server CPU 0.132612s. All **1000 status exchanges** pass;
 median 0.3105ms, p95 0.4543ms, p99 0.6051ms. Startup 11.69ms; shutdown 2.87ms.
 Admission is explicitly raised for the loopback generator; this measures pending
 connections/auth failures, not successful authentication or active players.
-[Production two-instance CLI/status checks](../evidence/m2a-cli-check.json) pass, including invalid count rejection and shutdown.
-[Descriptor-pressure recovery](../evidence/m2a-listener-recovery.json) passes:
+Production two-instance CLI/status checks (`evidence/m2a-cli-check.json`) pass, including invalid count rejection and shutdown.
+Descriptor-pressure recovery (`evidence/m2a-listener-recovery.json`) passes:
 established peer survives, fresh peer succeeds afterward, final cleanup succeeds.
 
-[Chunk microbenchmark](../evidence/m2a-chunk-profile.json): shared body 35,956 bytes;
+Chunk microbenchmark (`evidence/m2a-chunk-profile.json`): shared body 35,956 bytes;
 reused packet/scratch 35,965 bytes; 100,000 encodes average **385ns**, 1000
 encode+fast-zlib iterations average **11,271ns**, mean compressed body 348 bytes.
 This unchanged encoder benchmark excludes network, encryption and player fanout.
@@ -301,7 +303,7 @@ Rollback **was not performed**. The following archive instructions are historica
 a local Git checkpoint of accepted M2A is now being created before M2B. The local
 `.tools/m2a-precheckpoint-m1d.tar.gz` archive SHA-256 is
 `70d9da2a48f4a0ed7bf0b7a077f8ec4280e8419dade2ced64c9ea0527479a7f0`.
-[Archive verification](../evidence/m2a-rollback-verification.json) confirms **every
+Archive verification (`evidence/m2a-rollback-verification.json`) confirms **every
 file** in the final M1D implementation inventory matches archive contents.
 The pre-task partial-M2A input is separately preserved at
 `.tools/m2a-input-20261029.tar.gz`, SHA-256

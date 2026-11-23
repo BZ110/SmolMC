@@ -1,0 +1,24 @@
+name: Bug report
+description: Report a reproducible SmolMC problem.
+title: "[Bug] "
+body:
+  - type: input
+    id: revision
+    attributes:
+      label: SmolMC commit or tag
+    validations:
+      required: true
+  - type: input
+    id: environment
+    attributes:
+      label: OS, architecture, and client version
+      placeholder: Ubuntu 24.04 x86_64, Minecraft Java Edition 26.3
+    validations:
+      required: true
+  - type: textarea
+    id: behavior
+    attributes:
+      label: Steps, expected behavior, and actual behavior
+      description: Include relevant launch flags and sanitized excerpts. Keep account details, credentials, private saves, and game assets out of the report.
+    validations:
+      required: true

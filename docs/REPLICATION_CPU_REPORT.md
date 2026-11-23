@@ -1,5 +1,7 @@
 # Focused multiplayer CPU optimization
 
+Original capture filenames refer to the [local validation archive](../evidence/README.md).
+
 Date: 2026-10-29. Completed within explicit replication/CPU authorization.
 **No M2C or unrelated milestone work.** Pre-change checkpoint:
 `replication-perf-before` → `d046b37` (validated M2B).
@@ -47,8 +49,8 @@ baselines for comparison and does not mix that historical figure into the table.
   main thread is excluded from these worker counts. No compression hotspot was
   established for the below-threshold movement packets.
 
-Raw profiles: [dense baseline](../evidence/replication-dense-baseline-corrected-raw/p256-w1.sample.txt),
-[final dense](../evidence/replication-final-raw/p256-w1.sample.txt). Each other short
+Raw profiles: dense baseline (`evidence/replication-dense-baseline-corrected-raw/p256-w1.sample.txt`),
+final dense (`evidence/replication-final-raw/p256-w1.sample.txt`). Each other short
 scenario also has a native sample in its raw evidence directory.
 
 ## Changes → invariants → trade-offs
@@ -136,15 +138,15 @@ There were ten short windows total (initial three baseline, initial three candid
 one necessary corrected dense baseline, final three): approximately 90 seconds
 of active measurement, not another scaling campaign. No Linux/soak/large sweep.
 The before/after common test-only timestamps/histograms/signals are absent from
-the production binary. [Baseline harness patch](../evidence/replication-baseline-harness.patch)
+the production binary. Baseline harness patch (`evidence/replication-baseline-harness.patch`)
 reconstructs instrumentation and the corrected observer over the checkpoint.
 
-Evidence: [original baselines](../evidence/replication-before.json),
-[initial diagnostic](../evidence/replication-after.json),
-[corrected dense baseline](../evidence/replication-dense-baseline-corrected.json),
-[final three cases](../evidence/replication-final.json),
-[environment/binary hashes](../evidence/replication-environment.json) and
-[source hashes](../evidence/replication-source-sha256.txt).
+Evidence: original baselines (`evidence/replication-before.json`),
+initial diagnostic (`evidence/replication-after.json`),
+corrected dense baseline (`evidence/replication-dense-baseline-corrected.json`),
+final three cases (`evidence/replication-final.json`),
+environment/binary hashes (`evidence/replication-environment.json`) and
+source hashes (`evidence/replication-source-sha256.txt`).
 All selected runs reach expected visible edges, lose zero clients and finish with
 zero connections/replicas/frame leases and zero protocol/timeouts/task/I/O errors.
 
@@ -157,10 +159,10 @@ cipher continuation, partial-write cancellation/resume, invalid count/byte/empty
 overlap rejection and lease cleanup. Existing visibility/negative chunk movement,
 pending teleport, generation guards, 10,000-state ingress coalescing, slow readers,
 queue saturation/cancelled join, world switch/isolation, chat/pose and leave/rejoin
-fixtures pass. [Focused output](../evidence/replication-tests.txt),
-[workspace all-target Clippy](../evidence/replication-clippy.txt),
-[format check](../evidence/replication-fmt.txt) and
-[release build](../evidence/replication-release.txt) pass.
+fixtures pass. Focused output (`evidence/replication-tests.txt`),
+workspace all-target Clippy (`evidence/replication-clippy.txt`),
+format check (`evidence/replication-fmt.txt`) and
+release build (`evidence/replication-release.txt`) pass.
 
 Dense 256 still consumes ~82.5% of one core. With ~1.16 million position packets/s
 plus head/pose messages, required per-recipient AES-CFB8 bytes now dominate sampled

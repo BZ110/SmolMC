@@ -1,0 +1,21 @@
+name: Proposal
+description: Discuss a change to SmolMC before implementing it.
+title: "[Proposal] "
+body:
+  - type: textarea
+    id: goal
+    attributes:
+      label: Goal and use case
+      description: Describe the behavior you want and how it fits the roadmap.
+    validations:
+      required: true
+  - type: textarea
+    id: design
+    attributes:
+      label: Constraints, evidence, and trade-offs
+      description: Include source evidence, dependencies, compatibility, resource impact, or open questions where relevant.
+  - type: textarea
+    id: checks
+    attributes:
+      label: How would we verify it?
+      description: Describe a measurable acceptance test and any rollback considerations.

@@ -1,0 +1,43 @@
+{
+  "date": "2026-10-30",
+  "target": "two unmodified authenticated Minecraft Java 26.3 clients, protocol 777",
+  "address": "127.0.0.1:25566",
+  "observer": "user-reported; agent did not operate or independently view game windows",
+  "result": "ACCEPTED for requested playable PvP slice and final classic knockback profile",
+  "responses": [
+    {
+      "check": "base seven-step two-account checklist",
+      "response": "So far everything works. Cooldown for swords and crits don't seem to be functional. Death animation doesn't play, and F crashes.",
+      "interpretation": "broad base functionality response; four defects explicitly pending, not a per-step timing record"
+    },
+    {
+      "check": "F, cooldown, falling crit, death animation/respawn fixes",
+      "response": "Everything seems fine. No sweep hits. Sounds for the attacker don't play properly when hitting.",
+      "interpretation": "four requested fixes accepted, sweep/audio subsequently required"
+    },
+    {
+      "check": "sweep/attack sounds and subsequent motion revisions",
+      "response": "Multiple subsequent reports rejected consecutive-hit miniature hops; marked numeric trace retained",
+      "interpretation": "intermediate builds not accepted"
+    },
+    {
+      "check": "final 1.19.4-based profile: timed consecutive normal/sprint hits and landing sequence",
+      "response": "IT'S SO GOOOOD ty",
+      "interpretation": "explicit positive acceptance of the requested final knockback feel check"
+    }
+  ],
+  "scope": "User acceptance supplements encrypted fixtures for equipment, combat, death/respawn, world isolation and reconnect. No internet capacity, every survival feature, every possible client action, or bitwise 1.19.4/Paper/26.3 simulation claim.",
+  "binary_sha256_by_attempt": {
+    "client-check-failed.json": "7fffc363492afb2c817b2d313be0f932ed2f97938fd4952886697342f0deaa2e",
+    "client-check-attempt2.json": "028ccfca5347cd91572b8780a2bdf9c73c3f9c0fc7b0bccd140b246fc2416de0",
+    "client-check-attempt3.json": "d725a0683c2b3fe2dbf0372702df5d0dfe7e4513ca407643036c9d41176141b1",
+    "client-check-attempt4.json": "5dea51ed61b1964483f590408f99b12684ddabc652f7a75242f65cbe9bea65dc",
+    "client-check-attempt5.json": "a803a7a08b2e20db62b495b1890ef49f09ce15649c200f9ef16fcf00fc3857c0",
+    "client-check-attempt6.json": "14faa1751eeb1e8a4c85cab4293ec6eff2698f25556df085ec657beff9923c51",
+    "client-check-attempt7.json": "db126b3021ae4fe80b71390365bc42ad5d3ca33aee9e9545b137f41a2b9bd904",
+    "client-check.json": "8ddf27220c6620721aedc0d1c88c6552b332cab711c3582c2ccbd45b3f7ef688"
+  },
+  "final_validation_binary_sha256": "fb69f95b91aec32de79c55a4ee6f11853488edee5a09d79fbdbd8e39535faf6c",
+  "accepted_gameplay_source_sha256_recorded_after_acceptance": "1545d6540ebab65dc771381cdc975dd2203a94dbc57d97ff5a98dd61ac85b622",
+  "post_acceptance_changes": "Directory yields after each gameplay action to prevent critical-queue bursts; numeric diagnostic printing releases gameplay lock before IO. Accepted gameplay equations unchanged. Live manual arena remains accepted binary, separate from final tested release."
+}

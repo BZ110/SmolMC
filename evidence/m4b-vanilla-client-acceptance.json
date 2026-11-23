@@ -1,0 +1,34 @@
+{
+  "date": "2026-10-30",
+  "result": "USER_ACCEPTED",
+  "minecraft": "Java 26.3 / protocol 777",
+  "server": "127.0.0.1:25568",
+  "inventory_policy": "items-keep",
+  "world": "maintainer-supplied Anvil save",
+  "provenance": "Actual user testing requested with two unmodified clients; observations are user-reported. Computer access to Minecraft Launcher was not approved; no GUI automation or independently observed step timing is claimed.",
+  "stages": [
+    {
+      "binary_sha256": "1baeea3db960e35a883eceac5fa90a6bd497b66a1003bdb72bce62da86bdad3d",
+      "requested": "Two clients: mine with hotbar slot 2, see/collect cobblestone, Q/Ctrl-Q drops, E armor, combat/durability/mitigation/knockback and no disconnects; isolate/together/reset commands available.",
+      "user_reply": "Seems fine. Blocks when placed on grass should replace the grass, not place it on top.\n\nAlso ensure Netherite knockback mitigation matches 26.3",
+      "interpretation": "Core gameplay confirmed with requested corrections."
+    },
+    {
+      "binary_sha256": "22715fb318cd346285c024e6e2a818942bca5a87b154b8a7a53e6fc9cef3f93f",
+      "requested": "Rejoin both clients; short/tall grass replacement and Netherite mitigation with accepted unarmored feel.",
+      "user_reply": "Yup. Now the rest needs to be done.\n\nAlso some things like placing a block on top of a grass block then breaking causes that packet to be dropped. Taking an armor off your set then clicking it inside your inventory causes it to not actually go inside you inventory, etc. Sometimes blocks don't break.\n\nThese are simple things that can be fixed.\n\nLesson: Just because a client accepts a rule does not mean the server must not accept it. Within reason, it should. Yes it's why hacked clients work, but at the same time it makes the game more playable.",
+      "interpretation": "Grass/Netherite corrections confirmed; rapid interaction failures required another correction."
+    },
+    {
+      "binary_sha256": "2c0499462a0fabf6b07fc0117e941acb8d27661d2e182729e327f76cb48fbad9",
+      "requested": "After authorized restart: rapid place→break, consecutive mining, armor removal→inventory placement; original item gameplay retained.",
+      "user_reply": "Seems good.",
+      "interpretation": "Latest corrections accepted; broad final confirmation in the ongoing two-client acceptance scenario."
+    }
+  ],
+  "limits": "No fabricated per-step 18-item checklist or GUI timing. Long tool/armor break, lifetime, reset/isolation/death policies and adversarial races additionally have automated evidence; broad user confirmation does not independently enumerate each observation.",
+  "restart_authorization": "Explicit user permission to restart M4B when ready, without asking again. Only port 25568 server/helper restarted; M3/M4A servers left untouched.",
+  "user_tested_binary_sha256": "2c0499462a0fabf6b07fc0117e941acb8d27661d2e182729e327f76cb48fbad9",
+  "post_acceptance_audit": "2026-10-31: final release additionally serializes disconnect cache storage with mining receipt finalization; concurrent success/failure regression plus full platform checks. No new GUI observations are claimed for this lifecycle guard.",
+  "production_binary_sha256": "dd7794ce7df7113fd36f08600ba6bba39e9777fed679f14b4c472116d3940ab7"
+}

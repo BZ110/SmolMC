@@ -57,8 +57,13 @@ Root AGENTS.md and the roadmap govern current authorization.
 - Crash injection: disk full, server restart during save, Java bridge restart, malformed client disconnect.
 - Negative permissions tests: Java plugin cannot access other tenant's world without declared capability.
 
-## CI gate hierarchy (future)
-Static lint/license scan → fast unit/property tests → protocol codec fixtures → integration with real vanilla 26.3 client/bot → profile matrix → dedicated soak/performance canary. No performance optimization merges unless baseline correctness still passes.
+## CI and further verification
+
+GitHub CI runs formatting, strict Clippy and the locked Rust workspace tests.
+The on-demand extended workflow runs the release build, Java SDK, encrypted
+Play fixtures and Unix recovery checks. Real stock-client testing and workload
+measurements remain separate verification steps. See the [testing record](TESTED.md)
+for completed checks and the limits of the measurements.
 
 ## Evidence requirements
 Every test result includes version, host, exact command/config, output log, timestamps, failure reproduction or pass signal. A task is NOT complete merely because compiled code exists.

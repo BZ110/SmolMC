@@ -1,6 +1,46 @@
+# Rust, Java and Python build output
 /target/
+*.class
+*.jar
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.venv/
+
+# Private reference inputs, game saves and local tools
 /.tools/
 /unz/
-.DS_Store
-__pycache__/
+/unz.zip
+/world/
+/worlds/
+/saves/
+*.mca
+*.mcc
+level.dat
+level.dat_old
+session.lock
+
+# Validation output and local runtime files
+/evidence/*
+!/evidence/README.md
 /logs/
+*.log
+*.pid
+*.profraw
+*.profdata
+*.sock
+
+# Local configuration and credentials
+.env
+.env.*
+!.env.example
+!.env.*.example
+*.pem
+*.key
+
+# Editor and operating-system files
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/
+*.swp

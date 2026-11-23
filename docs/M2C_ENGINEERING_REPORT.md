@@ -1,5 +1,7 @@
 # M2C engineering report — optional Java SDK and local bridge
 
+Original capture filenames refer to the [local validation archive](../evidence/README.md).
+
 > Protocol erratum, 2026-10-30: real M3 client checks exposed a command-advertisement
 > packet ID defect in this checkpoint. Commands must use 0x10, not 0x0f. The M2C
 > headless fixture mirrored the incorrect ID; its pass did not establish vanilla
@@ -123,10 +125,10 @@ shared resident pages. Short shared-host runs have no confidence interval or
 capacity guarantee. `ps` CPU resolution is 0.01s; “0.00%” means no measured delta,
 not mathematical zero CPU (about 0.33 percentage-point resolution over 3s).
 
-[Before idle](../evidence/m2c-idle-before.json) uses the preserved optimized release
-binary, 2.5s warmup and ~3s observation. [Final overhead evidence](../evidence/m2c-resources-final.json)
+Before idle (`evidence/m2c-idle-before.json`) uses the preserved optimized release
+binary, 2.5s warmup and ~3s observation. Final overhead evidence (`evidence/m2c-resources-final.json`)
 uses the final production binary, 2.5s warmup/~3s windows. The initial implementation
-measurement is also retained in [initial resources](../evidence/m2c-resources.json);
+measurement is also retained in initial resources (`evidence/m2c-resources.json`);
 final cold startup/ownership guards and SDK bounds were then validated. This is
 not another increasing-world/player campaign.
 
@@ -170,8 +172,8 @@ chat every two seconds, actual TCP/AES-CFB8/compression and 50ms replication pac
 Separate Rust, client-generator and Java processes. Before is the saved optimized
 release probe (`replication-perf-validated`), after enables the bridge and one Java
 observer subscribing to cold events. No movement IPC is introduced. Native samples
-and raw logs are saved with [before](../evidence/m2c-play-before.json) and
-[Java-enabled](../evidence/m2c-play-java.json) evidence. Later changes add cold
+and raw logs are saved with before (`evidence/m2c-play-before.json`) and
+Java-enabled (`evidence/m2c-play-java.json`) evidence. Later changes add cold
 startup/peer guards, test assertions and bounded SDK input validation, not the
 replication/network/chunk/player hot paths; measured binary hashes are retained.
 
@@ -206,13 +208,13 @@ checks are intentionally also compiled into the private sessions fixture against
 cfg(test) Service, so these are 100 executions / 94 distinct test bodies, not 100
 independent scenarios. This keeps private Play test entry points out of production.
 
-macOS evidence: [full suite](../evidence/m2c-tests.txt), [fmt](../evidence/m2c-fmt.txt),
-[Clippy](../evidence/m2c-clippy.txt), [release](../evidence/m2c-release.txt),
-[examples](../evidence/m2c-examples.txt), [strict Java compile/integration](../evidence/m2c-java-tests.txt),
-[Java encrypted Play](../evidence/m2c-java-play.txt),
-[fault checks](../evidence/m2c-faults.json),
-[listener recovery](../evidence/m2c-listener-recovery.json),
-[example startup/shutdown](../evidence/m2c-example-smoke.txt).
+macOS evidence: full suite (`evidence/m2c-tests.txt`), fmt (`evidence/m2c-fmt.txt`),
+Clippy (`evidence/m2c-clippy.txt`), release (`evidence/m2c-release.txt`),
+examples (`evidence/m2c-examples.txt`), strict Java compile/integration (`evidence/m2c-java-tests.txt`),
+Java encrypted Play (`evidence/m2c-java-play.txt`),
+fault checks (`evidence/m2c-faults.json`),
+listener recovery (`evidence/m2c-listener-recovery.json`),
+example startup/shutdown (`evidence/m2c-example-smoke.txt`).
 
 Tests cover real launch/attach; 1000-edit isolation and clone divergence; reset,
 park/destroy/stale world/server/player handles; unsupported/invalid/read-only/
@@ -240,12 +242,12 @@ Fresh **Alpine Linux arm64/musl** validation uses Linux 6.18.58, pinned Rust 1.9
 OpenSSL 3.5.9 and OpenJDK 25.0.4, Java `--release 17`. Full tests/fmt/Clippy,
 release/examples, actual Java integration, Java/Play event flood, bridge faults and
 listener recovery pass. Source hashes match the host code snapshot. Evidence:
-[Linux metadata](../evidence/m2c-linux-meta.json),
-[tests](../evidence/m2c-linux-tests.txt), [Clippy](../evidence/m2c-linux-clippy.txt),
-[build](../evidence/m2c-linux-build.txt), [Java](../evidence/m2c-linux-java.txt),
-[Java/Play](../evidence/m2c-linux-java-play.txt),
-[faults](../evidence/m2c-linux-faults.json),
-[listener recovery](../evidence/m2c-linux-recovery.json).
+Linux metadata (`evidence/m2c-linux-meta.json`),
+tests (`evidence/m2c-linux-tests.txt`), Clippy (`evidence/m2c-linux-clippy.txt`),
+build (`evidence/m2c-linux-build.txt`), Java (`evidence/m2c-linux-java.txt`),
+Java/Play (`evidence/m2c-linux-java-play.txt`),
+faults (`evidence/m2c-linux-faults.json`),
+listener recovery (`evidence/m2c-linux-recovery.json`).
 A validation-cache issue was caught by comparing test names/counts, not only
 source hashes: extracting a changed archive with preserved timestamps let Cargo
 reuse an older test binary (98 executions). Final evidence comes from a fresh VM
@@ -297,7 +299,7 @@ test executable printed by Cargo; the authentication fixture is test-only. Linux
 uses the same checks with `RUSTFLAGS='-C target-feature=-crt-static'`, system OpenSSL
 development headers, Rust 1.99.1 and Java 17+ JDK. macOS resource samplers explicitly
 use macOS ps units; do not pass them off as Linux performance measurements.
-[Environment, hashes and preservation](../evidence/m2c-environment.json) records
+Environment, hashes and preservation (`evidence/m2c-environment.json`) records
 which binaries produced each short measurement and the unchanged hot-path sources.
 
 Rollback was not performed. Stop Java owners and Rust gracefully; preserve logs

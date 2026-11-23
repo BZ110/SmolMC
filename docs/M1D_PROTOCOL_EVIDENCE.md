@@ -1,5 +1,7 @@
 # M1D protocol-777 evidence ledger
 
+Original capture filenames refer to the [local validation archive](../evidence/README.md).
+
 Date: 2026-10-29. Exact target: Java Edition **26.3, protocol 777**.
 This extends [M1B](M1B_PROTOCOL_EVIDENCE.md) and [M1C](M1C_PROTOCOL_EVIDENCE.md).
 Authentication, encryption/compression, Configuration and terrain layouts remain.
@@ -7,7 +9,7 @@ Authentication, encryption/compression, Configuration and terrain layouts remain
 ## Provenance and verification
 
 Observed reference behavior comes from the user-provided local archive. The
-[33-path SHA-256 inventory](../evidence/m1d-protocol-sources.json) pins game protocol
+33-path SHA-256 inventory (`evidence/m1d-protocol-sources.json`) pins game protocol
 registration, packet fields, registry ordering and nested codecs. Packet IDs
 follow the M1B registration-order inventory, including bundling rules. Paths
 below are relative to `unz/net/minecraft/`; packet basenames without a directory
@@ -16,7 +18,7 @@ account credentials or raw chat contents are redistributed.
 
 The stock two-account client checks independently exercised visibility, walking/
 flight, rotation/crouching, bidirectional chat, removal from the world/Tab list,
-reconnect and keepalive. See [final client record](../evidence/m1d-vanilla-client-complete.json).
+reconnect and keepalive. See final client record (`evidence/m1d-vanilla-client-complete.json`).
 This establishes the exercised subset, not all legal packet combinations.
 An emoji was optional in the final request and was not separately confirmed;
 supplementary-character encoding is established by a literal automated fixture.

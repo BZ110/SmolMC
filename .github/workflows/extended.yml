@@ -1,0 +1,45 @@
+name: Extended checks
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: extended-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  integration:
+    name: Java and Unix integration
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    env:
+      CARGO_INCREMENTAL: "0"
+      RUST_BACKTRACE: "1"
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Install pinned Rust toolchain
+        run: rustup toolchain install --no-self-update
+      - uses: actions/setup-java@d1374f8ac74474200d16ef8ecee22c7ae7a51880 # v6.3.0
+        with:
+          distribution: temurin
+          java-version: "17"
+      - name: Build release server
+        run: cargo build --release --locked
+      - name: Test Java SDK
+        run: scripts/java-check.sh
+      - name: Test Java bridge in encrypted Play
+        run: |
+          cargo test -p smolmc-sessions --locked -- --ignored --test-threads=1 \
+            java_sidecar_controls_real_encrypted_play \
+            pvp_java_sdk_observes_combat \
+            items_java_sdk_snapshots \
+            terrain_java_sdk_controls_imported_worlds
+      - name: Check bridge and listener recovery
+        run: |
+          python3 scripts/check_m2c_faults.py --output target/ci/bridge-faults.json
+          python3 scripts/check_listener_recovery.py --output target/ci/listener-recovery.json

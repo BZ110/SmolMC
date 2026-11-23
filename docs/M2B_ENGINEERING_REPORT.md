@@ -1,5 +1,7 @@
 # M2B engineering report — shared templates and resource profiles
 
+Original capture filenames refer to the [local validation archive](../evidence/README.md).
+
 Date: **2026-10-29, America/Toronto**. Scope: M2B only, following explicit user
 acceptance of M2A after user-reported real Minecraft 26.3 client verification.
 
@@ -90,7 +92,7 @@ limits are trusted Rust controls. Minecraft Feature Flags remain unchanged.
 No runtime feature-toggle, plugin permission or configuration-file schema is promised.
 
 No new third-party package, workspace crate, Cargo feature or lockfile dependency.
-[Preservation evidence](../evidence/m2b-preservation.json) confirms auth, network,
+Preservation evidence (`evidence/m2b-preservation.json`) confirms auth, network,
 protocol codecs, chunk encoder and registry/tag inventories are byte-identical to
 accepted M2A. Shared body is still **35,956 bytes**, registry packets **33,513 bytes**,
 and reusable Play scratch **35,965 bytes**. The benchmark has a fixed controller
@@ -107,12 +109,12 @@ thread; production gains no thread, task, callback or tick per world.
 | Explicit separate-process active probe | 1/32/128/256 players and five 32-player churn rounds pass | Not run as a Linux performance benchmark |
 
 Groups: auth 5; network unit/TCP 11/11; protocol 17; chunks 3; sessions 23;
-world 14. Evidence: [macOS tests](../evidence/m2b-tests.txt),
-[Clippy](../evidence/m2b-clippy.txt), [fmt](../evidence/m2b-fmt.txt),
-[release](../evidence/m2b-release-build.txt), [examples](../evidence/m2b-examples-build.txt),
-[Linux tests](../evidence/m2b-linux-tests.txt), [Linux Clippy](../evidence/m2b-linux-clippy.txt),
-[Linux builds](../evidence/m2b-linux-build.txt) and
-[Linux metadata/source hashes](../evidence/m2b-linux-meta.json).
+world 14. Evidence: macOS tests (`evidence/m2b-tests.txt`),
+Clippy (`evidence/m2b-clippy.txt`), fmt (`evidence/m2b-fmt.txt`),
+release (`evidence/m2b-release-build.txt`), examples (`evidence/m2b-examples-build.txt`),
+Linux tests (`evidence/m2b-linux-tests.txt`), Linux Clippy (`evidence/m2b-linux-clippy.txt`),
+Linux builds (`evidence/m2b-linux-build.txt`) and
+Linux metadata/source hashes (`evidence/m2b-linux-meta.json`).
 
 New tests cover template/root/unchanged-chunk sharing; clone divergence;
 negative local/chunk coordinates; duplicate/reverted edits; atomic edit/chunk/
@@ -123,17 +125,17 @@ M1D presence/chat/rejoin/spoof/slow-reader/coalescing/full-queue/cancelled-join
 regressions remain. The 10,000-update ingress-coalescing test still processes one
 latest snapshot. No changes to bounded auth, transport or packet codecs.
 
-[Release cloned-world wire fixture](../evidence/m2b-cloned-wire.txt): all four clients
+Release cloned-world wire fixture (`evidence/m2b-cloned-wire.txt`): all four clients
 receive the initial shared correction; only A's clients receive its two-position
 batch/reversion, B remains unchanged. Teardown returns active connections,
 replicas/edges/frame leases and retained overlay charges to zero without protocol
 errors/timeouts/task failures. These are synthetic **post-authentication** clients,
 not real-account authentication or rendering capacity. Production cannot enable them.
 
-[Standalone release byte-limit probe](../evidence/m2b-byte-budget-probe.json) sets
+Standalone release byte-limit probe (`evidence/m2b-byte-budget-probe.json`) sets
 a world's limit to the measured one-edit logical charge (**132 bytes**), accepts
 that exact boundary, rejects the next edit atomically, preserves current content/
-charges and returns charges to zero after destroy. Its [source](../evidence/m2b-byte-budget-probe.rs)
+charges and returns charges to zero after destroy. Its source (`evidence/m2b-byte-budget-probe.rs`)
 and exact compiler command are preserved. It uses the same built release libraries.
 
 The one ignored test remains the explicitly coordinated separate-process resource
@@ -144,7 +146,7 @@ Linux validation used an ephemeral 2-vCPU/6-GiB Alpine 3.24.3 VM, Linux 6.18.58,
 Rust 1.99.1, OpenSSL 3.5.9 and `RUSTFLAGS='-C target-feature=-crt-static'`. The initial
 offline cache lacked a locked platform dependency; `cargo fetch --locked` supplied
 it without changing Cargo.lock. The initial VM also lacked enabled loopback,
-causing a network-test bind failure. The [failed environment run](../evidence/m2b-linux-initial-loopback-failure.txt)
+causing a network-test bind failure. The failed environment run (`evidence/m2b-linux-initial-loopback-failure.txt`)
 is retained; after enabling loopback, **all checks were rerun successfully** with
 matching source hashes. VM and local transfer helper were stopped before profiling.
 This is fresh Linux build/conformance/fault validation, not Linux performance or
@@ -153,9 +155,9 @@ stock-client rendering evidence.
 ## Resource methodology and measured results
 
 Host: Apple M5 Pro, 18 logical CPUs, macOS 27.0.1 arm64; Rust 1.99.1 and system
-OpenSSL 4 linkage. [Environment/binary hashes](../evidence/m2b-validation-environment.json)
-and [source inventory](../evidence/m2b-implementation-sha256.txt) pin the run.
-[Raw world-resource evidence](../evidence/m2b-world-resources.json) links six fresh
+OpenSSL 4 linkage. Environment/binary hashes (`evidence/m2b-validation-environment.json`)
+and source inventory (`evidence/m2b-implementation-sha256.txt`) pin the run.
+Raw world-resource evidence (`evidence/m2b-world-resources.json`) links six fresh
 release child processes controlled by `scripts/measure_m2b_worlds.py`.
 
 Each child uses the real Service baseline but no listener or clients. Its async
@@ -270,7 +272,7 @@ while process libraries/allocator/driver high-water state can remain resident.
 
 ### Active Play and previous performance protections
 
-[Dense active evidence](../evidence/m2b-active-play.json) uses the existing separate
+Dense active evidence (`evidence/m2b-active-play.json`) uses the existing separate
 server/client release fixtures: 20Hz movement/yaw, 1Hz crouch, one sender every
 two seconds, actual TCP/AES-CFB8/compression/chunk/batch/keepalive handlers and a
 20-second observation after everyone spawns. All players share one world to retain
@@ -291,22 +293,22 @@ bounded regression; pacing and intermediate-snapshot coalescing/delivery latency
 are not quantified. Dense 256 remains near one-core capacity; 512 is an admission
 safety bound, not a gameplay capacity promise.
 
-[Five-round 32-player churn](../evidence/m2b-active-churn.json) also passes (160
+Five-round 32-player churn (`evidence/m2b-active-churn.json`) also passes (160
 fixture sessions). Post-cleanup RSS is **14,208 / 15,248 / 15,248 / 15,264 / 15,296
 KiB**; total process CPU 1.853971s and OS peak 15,328 KiB. All final leases/counters
 are zero. Authentication costs/capacity are not simulated.
 
-[Production transport profile](../evidence/m2b-connection-resources.json): ready/
+Production transport profile (`evidence/m2b-connection-resources.json`): ready/
 five-second idle RSS 9840 KiB, 512 partial sockets 15,024 KiB, final idle 15,328
 KiB after blocking-worker retirement; OS peak 15,392 KiB. Total server CPU
 0.121951s. All 1000 status reconnects pass: median 0.2905ms, p95 0.4282ms,
 p99 0.4963ms. Startup 9.84ms; shutdown 2.75ms. Admission rates are explicitly raised
 for the loopback generator; this is transport/auth-failure load, not successful
 real-account authentication or active-world capacity.
-[Listener recovery](../evidence/m2b-listener-recovery.json) and
-[CLI/profile/status/shutdown](../evidence/m2b-cli-check.json) pass.
+Listener recovery (`evidence/m2b-listener-recovery.json`) and
+CLI/profile/status/shutdown (`evidence/m2b-cli-check.json`) pass.
 
-[Unchanged chunk encoder benchmark](../evidence/m2b-chunk-profile.json): 35,956-byte
+Unchanged chunk encoder benchmark (`evidence/m2b-chunk-profile.json`): 35,956-byte
 shared body, 35,965-byte reusable scratch, 100,000 encodes average **323ns**;
 1000 encode+fast-zlib operations average **10,818ns**, mean compressed body 348
 bytes. Excludes encryption, sockets and player fanout. No compressed cache added.

@@ -1,0 +1,66 @@
+{
+  "checkpoint": "m4b-before",
+  "checks": {
+    "yaw_axes": {
+      "unchanged": true,
+      "before_sha256": "f86594b70d19224d10c07b988107faf2523170139e6c3fae359865b63208c258",
+      "after_sha256": "f86594b70d19224d10c07b988107faf2523170139e6c3fae359865b63208c258"
+    },
+    "classic_velocity": {
+      "unchanged": true,
+      "before_sha256": "ef6bca1f5d282a5d1fd350d92c71cdc534b51cba603e5987e150ada0f02c435e",
+      "after_sha256": "ef6bca1f5d282a5d1fd350d92c71cdc534b51cba603e5987e150ada0f02c435e"
+    },
+    "directed_knockback": {
+      "unchanged": true,
+      "before_sha256": "6e9be490e50946d818099e4d782cff6d3973421846a7b83d1eaac7ef0e05f16f",
+      "after_sha256": "6e9be490e50946d818099e4d782cff6d3973421846a7b83d1eaac7ef0e05f16f"
+    },
+    "knockback": {
+      "unchanged": true,
+      "before_sha256": "3982dee3e613c36aac9a7a5333fb347107b78da5d50b2c8670f3ad24590344bc",
+      "after_sha256": "3982dee3e613c36aac9a7a5333fb347107b78da5d50b2c8670f3ad24590344bc"
+    },
+    "in_reach": {
+      "unchanged": true,
+      "before_sha256": "981721a278552e66307b23116811e40721ef74b202bb3390ea9634c09fd9dade",
+      "after_sha256": "981721a278552e66307b23116811e40721ef74b202bb3390ea9634c09fd9dade"
+    },
+    "in_sweep": {
+      "unchanged": true,
+      "before_sha256": "0a96afac7c96b046ed27e54838230f897811e3606f567f3709ebe39f7401d20b",
+      "after_sha256": "0a96afac7c96b046ed27e54838230f897811e3606f567f3709ebe39f7401d20b"
+    },
+    "attack_strength": {
+      "unchanged": true,
+      "before_sha256": "52cdce9c60af7be78b02a4332c0c2e397ec460250dbdb6106b92da326f1dbb89",
+      "after_sha256": "52cdce9c60af7be78b02a4332c0c2e397ec460250dbdb6106b92da326f1dbb89"
+    },
+    "reset_charge": {
+      "unchanged": true,
+      "before_sha256": "9cdf35cd1362d66dfb8b7e77b8b1fae37d7924d245c8fa09aae9570a792a64f1",
+      "after_sha256": "9cdf35cd1362d66dfb8b7e77b8b1fae37d7924d245c8fa09aae9570a792a64f1"
+    },
+    "can_crit": {
+      "unchanged": true,
+      "before_sha256": "7abdc47448edcde21e812521c2f8e9e50636baf368e1cbc856a182847868f5bc",
+      "after_sha256": "7abdc47448edcde21e812521c2f8e9e50636baf368e1cbc856a182847868f5bc"
+    },
+    "classify": {
+      "unchanged": true,
+      "before_sha256": "df8149a21858be2cfcaa6fdb6920f519ed8429b656a12f5195ad31c724e26f46",
+      "after_sha256": "df8149a21858be2cfcaa6fdb6920f519ed8429b656a12f5195ad31c724e26f46"
+    },
+    "pose": {
+      "unchanged": true,
+      "before_sha256": "363cb6ecb63f9825bf0a019b36e55039cbee3b7389a28d6d5b917efeee33c6f8",
+      "after_sha256": "363cb6ecb63f9825bf0a019b36e55039cbee3b7389a28d6d5b917efeee33c6f8"
+    },
+    "advance_motion": {
+      "unchanged": true,
+      "before_sha256": "8c82d64e4f7a5b68adcd0b11ad17a70497081a5dd2c3533cb61464b25d7a3b5a",
+      "after_sha256": "8c82d64e4f7a5b68adcd0b11ad17a70497081a5dd2c3533cb61464b25d7a3b5a"
+    }
+  },
+  "scope": "Exact source-body comparison for accepted unarmored equations, precision, contact/motion and classifications. Armor resistance is an explicit strength multiplier at call sites; new armor mitigation affects hurt, not these functions."
+}

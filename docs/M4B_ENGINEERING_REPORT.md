@@ -1,5 +1,7 @@
 # M4B — Items, Drops, Durability & Armor
 
+Original capture filenames refer to the [local validation archive](../evidence/README.md).
+
 User acceptance 2026-10-30; final audit 2026-10-31. Checkpoint `m4b-before` preserves accepted M4A `d6371cc` /
 `m4a-validated`. **M4B is user-accepted and validated**, with final milestone tag
 `m4b-validated`. No later milestone is authorized.
@@ -176,7 +178,7 @@ durability/breakage, armor, policies, isolation, cleanup and reliable queue limi
 
 ## Short resource measurements
 
-[Baseline and diagnostic runs](../evidence/m4b-performance.json),
+Baseline and diagnostic runs (`evidence/m4b-performance.json`),
 [final M4B runs](../evidence/m4b-performance-final.json) and
 [item/mining probes](../evidence/m4b-gameplay-resources.json) retain raw output and
 binary hashes. CPU is percent of one core; RSS is whole Rust PID KiB. These cases

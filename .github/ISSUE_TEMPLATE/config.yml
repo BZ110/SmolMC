@@ -1,0 +1,5 @@
+blank_issues_enabled: true
+contact_links:
+  - name: Report a security vulnerability privately
+    url: https://github.com/BZ110/SmolMC/security/advisories/new
+    about: Use a private report for authentication, isolation, or other security issues.

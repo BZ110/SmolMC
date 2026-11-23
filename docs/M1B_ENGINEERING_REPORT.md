@@ -1,5 +1,7 @@
 # M1B engineering report
 
+Original capture filenames refer to the [local validation archive](../evidence/README.md).
+
 Date: 2026-10-29, America/Toronto  
 Target: Minecraft Java Edition 26.3, protocol 777  
 Status: **Implemented and validated through M1B only. Stop before M1C.**
@@ -15,8 +17,8 @@ and the minimum valid Play entry. The governing gate is `13_ROADMAP.md`:
 **The final signed-in stock 26.3 client passed that wire-state gate.** The server
 recorded verified identity, Login ACK, Configuration ACK, Play Login and 403
 decoded client Play messages. The user confirmed the completion message again
-on the finished binary. Evidence: [client observation](../evidence/m1b-vanilla-client-check.json)
-and [final server trace](../evidence/m1b-vanilla-server.log).
+on the finished binary. Evidence: client observation (`evidence/m1b-vanilla-client-check.json`)
+and final server trace (`evidence/m1b-vanilla-server.log`).
 
 The client remained on Loading Terrain during the empty 20-second probe. It
 then received “M1B Play entry complete. Terrain and gameplay require M1C.” This
@@ -70,8 +72,8 @@ development; it was removed before the recorded final benchmarks.
 The regression retains a working status socket during descriptor exhaustion,
 verifies its pong, frees descriptors, then verifies a new status connection.
 Final macOS and Linux runs both passed, each observing three recoverable accept
-errors with clean process exit. See [macOS regression](../evidence/m1b-listener-recovery-final.json)
-and [Linux regression](../evidence/m1b-linux-listener-recovery.json).
+errors with clean process exit. See macOS regression (`evidence/m1b-listener-recovery-final.json`)
+and Linux regression (`evidence/m1b-linux-listener-recovery.json`).
 
 Connection-task unwind is counted and contained to its owned socket/resources;
 the listener remains available. A deterministic injected-panic test verifies
@@ -82,7 +84,7 @@ failure risks, as required by the architecture's isolation distinction.
 ## Protocol and security evidence
 
 [The packet ledger](M1B_PROTOCOL_EVIDENCE.md) records every implemented state,
-direction, ID, layout and reference path. [The source inventory](../evidence/m1b-protocol-sources.json)
+direction, ID, layout and reference path. The source inventory (`evidence/m1b-protocol-sources.json`)
 pins 54 inspected paths. IDs are separately inventoried and reproducible by
 `scripts/inventory_protocol_ids.py`. No packet bodies were guessed from an older
 protocol. Exact-version stock-client interoperability independently validates
@@ -177,9 +179,9 @@ negative fixtures were not performed. Configured library/phase deadlines and
 bounded concurrency are verified by code inspection and the exercised timeout
 paths; this is not an exhaustive fault campaign or coverage-guided fuzz run.
 
-Raw macOS commands/results: [m1b-checks.txt](../evidence/m1b-checks.txt).
-Linux: [tests](../evidence/m1b-linux-checks.txt), [Clippy](../evidence/m1b-linux-clippy.txt),
-[release build](../evidence/m1b-linux-build.txt), [host/toolchain/source pins](../evidence/m1b-linux-meta.json).
+Raw macOS commands/results: m1b-checks.txt (`evidence/m1b-checks.txt`).
+Linux: tests (`evidence/m1b-linux-checks.txt`), Clippy (`evidence/m1b-linux-clippy.txt`),
+release build (`evidence/m1b-linux-build.txt`), host/toolchain/source pins (`evidence/m1b-linux-meta.json`).
 The Rust source/manifests tested on Linux match the final macOS workspace hashes.
 
 Linux environment: temporary Alpine 3.24.3 / Linux 6.18.58 aarch64 VM using the
@@ -193,7 +195,7 @@ the VM, and no VM tooling becomes a server dependency.
 
 Machine: Apple M5 Pro, 18 logical CPUs, macOS 27.0.1 arm64. Rust 1.99.1; OpenSSL
 3.6.5; release binary **3,074,832 bytes**. Git revision: N/A, workspace supplied
-without Git. Source hashes are in [m1b-implementation-sha256.txt](../evidence/m1b-implementation-sha256.txt).
+without Git. Source hashes are in m1b-implementation-sha256.txt (`evidence/m1b-implementation-sha256.txt`).
 
 The final synthetic run used loopback with `--max-connections 512
 --connection-rate 4096 --per-ip-rate 4096`. Raised rates allow a single-IP load
@@ -234,8 +236,8 @@ Python-driven local smoke observations, not production latency/throughput/SLA
 or cold-start guarantees. CPU from `ps` is quantized to 0.01s: unchanged idle
 samples do not mean literally zero CPU. The server PID's `wait4` totals were **0.047280s user CPU + 0.072059s system CPU** (0.119339s total), with **15200 KiB OS peak RSS**. Those process totals exclude the Python generator and `ps` subprocesses; OS peak RSS remains distinct from heap-allocation accounting.
 
-Raw data and final counters: [m1b-resources.json](../evidence/m1b-resources.json),
-[m1b-resources.log](../evidence/m1b-resources.log). Reproduce with
+Raw data and final counters: m1b-resources.json (`evidence/m1b-resources.json`),
+m1b-resources.log (`evidence/m1b-resources.log`). Reproduce with
 `python3 scripts/measure_m1b.py` after a release build.
 
 ### Separate event-loop responsiveness probe
@@ -244,8 +246,8 @@ A diagnostic binary used the unchanged M1B services/runtime limits and a 10ms
 timer, with 128 initial partial-frame connections and 1000 paced status exchanges.
 All 1000 status exchanges passed. Across 1000 timer samples, lateness was median
 **1.497ms**, p95 **2.201ms**, p99 **2.350ms**, maximum **2.432ms**. Shutdown again
-left zero connections and frame leases. See [raw results](../evidence/m1b-event-loop-delay.json)
-and [probe source](../evidence/m1b-loop-probe.rs).
+left zero connections and frame leases. See raw results (`evidence/m1b-event-loop-delay.json`)
+and probe source (`evidence/m1b-loop-probe.rs`).
 
 The probe was compiled from a separate scratch Cargo workspace depending on the
 same `smolmc-network`/`smolmc-sessions` paths, Tokio 1.54.1 and serde_json 1.0.154.
@@ -263,7 +265,7 @@ The last pre-stop sample was 14608 KiB, two threads and cumulative CPU 0.05s.
 Shorter peaks may be missed. The extra surviving observed thread was not
 attributed to a specific platform TLS/runtime component; no thread-leak-freedom
 claim is made. The process subsequently exited cleanly with zero active sessions,
-connections and frame reservations. See [real-login samples](../evidence/m1b-real-login-resources.json).
+connections and frame reservations. See real-login samples (`evidence/m1b-real-login-resources.json`).
 
 RSS retained after churn is not back to startup. Stable short-run samples and
 released logical leases do not prove leak-freedom or identify allocator/provider

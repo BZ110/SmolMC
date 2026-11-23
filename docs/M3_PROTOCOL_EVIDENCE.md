@@ -1,5 +1,7 @@
 # Revised M3 protocol and gameplay evidence
 
+Original capture filenames refer to the [local validation archive](../evidence/README.md).
+
 2026-10-30. Wire target: unmodified Java 26.3, protocol 777. At the user's explicit request,
 knockback uses a **1.19.4-based arena profile**, not full 26.3 gameplay parity. This extends the M1B–M2C
 ledgers. Authentication, encryption, compression, Configuration and shared terrain
@@ -9,7 +11,7 @@ facts, local arena policies and what remains unverified.
 ## Independent evidence and a corrected assumption
 
 Observed reference: the operator-owned `unz/net/minecraft/` inventory is pinned in
-[evidence/m3-protocol-sources.json](../evidence/m3-protocol-sources.json). Only paths
+evidence/m3-protocol-sources.json (`evidence/m3-protocol-sources.json`). Only paths
 and hashes are distributed. Packet classes live under `network/protocol/game/`;
 registration order is in `GameProtocols.java`. Clientbound bundle delimiter occupies
 slot **0** even though it is registered through `withBundlePacket`, not `addPacket`.
@@ -26,12 +28,12 @@ the installed official 26.3 client's codecs and real built-in/dynamic registries
 Each original Rust outbound vector must decode to its expected Java packet class,
 consume all bytes and re-encode byte-for-byte. It checks actual item/attribute/
 particle IDs, incoming F action and semantic motion-packet decoding. Results and JAR/vector hashes are in
-[m3-reference-codecs.json](../evidence/m3-reference-codecs.json). The separate JVM
+m3-reference-codecs.json (`evidence/m3-reference-codecs.json`). The separate JVM
 is capped at 512 MiB. No account files, launcher tokens, Mojang implementation or
 assets are copied into the repository. This codec check is independent of the
 Rust fixture but does not establish rendering or full gameplay parity.
 
-The separate [classic numeric check](../evidence/m3-classic1194-reference.json)
+The separate classic numeric check (`evidence/m3-classic1194-reference.json`)
 executes actual Paper **1.19.4 build 550** `Mth` and velocity packet code: 16 yaw
 vectors and six velocity quantization vectors. Its original adapter is under
 `reference-tests/Classic1194ReferenceCheck.java`. The JAR was obtained from the
@@ -52,7 +54,7 @@ primitive replay reproduced the 10-tick landing dip but did not instantiate a re
 ServerPlayer/network loop. It was insufficient to establish full gameplay feel.
 The user rejected the modern profile and selected 1.19.4 as the target. Current
 acceptance is the real-client classic-profile feedback plus the explicitly scoped
-checks above. [Marked numeric traces](../evidence/m3-knockback-diagnostic.json)
+checks above. Marked numeric traces (`evidence/m3-knockback-diagnostic.json`)
 retain the failure rather than treating earlier scalar passes as GUI acceptance.
 
 ## Clientbound additions/corrections

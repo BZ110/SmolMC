@@ -1,5 +1,7 @@
 # Revised M3 — PvP Gameplay Foundation
 
+Original capture filenames refer to the [local validation archive](../evidence/README.md).
+
 2026-10-30. Final checkpoint: `m3-pvp-validated`. Rollback checkpoint:
 `m3-pvp-before` → `08fef9a` (`m2c-validated`). Revised M3 is implemented and
 user-accepted. The original plugin-ecosystem M3, broad M4 and M5 remain deferred.
@@ -51,13 +53,13 @@ implementation bodies, JARs or assets are distributed.
 - **Observed wire facts:** actual installed 26.3 codecs independently decode,
   consume exactly and re-encode 17 outbound vectors across 16 packet classes.
   The actual inbound F enum, registry item/attribute/particle IDs and semantic LP
-  velocity are checked. [Codec result](../evidence/m3-reference-codecs.json).
+  velocity are checked. Codec result (`evidence/m3-reference-codecs.json`).
 - **Observed historical arithmetic:** actual Paper 1.19.4 build 550 classes match
   16 yaw and six velocity quantization vectors. Official download hashes and
   pinned Paper/CraftBukkit source/patch inventories ground the inspected base/
   sprint equations, motion restoration and sprint cancellation.
-  [Classic result](../evidence/m3-classic1194-reference.json),
-  [source inventory](../evidence/m3-classic1194-sources.json). Patch-only mode was
+  Classic result (`evidence/m3-classic1194-reference.json`),
+  source inventory (`evidence/m3-classic1194-sources.json`). Patch-only mode was
   used; no Paper server/plugin host was launched. No Purpur was used.
 - **Design policy:** confirmed roof contact settles stale downward motion to the
   ordinary resting gravity/drag vector before a same-phase hit. The rejected
@@ -79,7 +81,7 @@ by changing client memory settings.
 The historical 26.3 primitive motion adapter initially omitted accepted-position
 restoration. Later paired primitive checks reproduced the rejected landing dip,
 but did not instantiate the full ServerPlayer/network/render path. They were
-insufficient to establish gameplay feel. [Marked failure evidence](../evidence/m3-knockback-diagnostic.json)
+insufficient to establish gameplay feel. Marked failure evidence (`evidence/m3-knockback-diagnostic.json`)
 and [diagnostic scope](../reference-tests/diagnostics/modern-26-3/README.md)
 remain available; they are not current classic-profile acceptance gates.
 
@@ -101,8 +103,8 @@ A final synchronized sweep case exposed queue saturation: 32 directory commands
 could run before writers drained, closing one group of 16 clients. The repair ends
 a directory batch after a gameplay action and yields the existing executor.
 Movement retains 32-command/1ms batching; capacities and fail-closed backpressure
-are unchanged. The [failed run](../evidence/m3-combat-queue-failure.json),
-[targeted correction check](../evidence/m3-combat-fairness-check.json) and final
+are unchanged. The failed run (`evidence/m3-combat-queue-failure.json`),
+targeted correction check (`evidence/m3-combat-fairness-check.json`) and final
 three-case run are retained. Failed reduced-load CPU is not a valid improvement.
 Numeric diagnostic tracing releases player-state locks before stderr IO.
 
@@ -123,8 +125,8 @@ a compatible subset, tested with its preserved JAR. See the [bridge contract](M2
 
 ## Short measured resource profile
 
-[Before](../evidence/m3-before.json) is the preserved accepted M2C release fixture;
-[after](../evidence/m3-after.json) records final production/probe hashes and raw
+Before (`evidence/m3-before.json`) is the preserved accepted M2C release fixture;
+after (`evidence/m3-after.json`) records final production/probe hashes and raw
 logs/histograms/profiles. Both use one-second all-ready warmup and about eight
 seconds of active measurement. Separate server/client PIDs run encrypted,
 compressed post-authentication Play on local macOS arm64. CPU is percent of **one
@@ -182,8 +184,8 @@ regression evidence, not internet capacity, long-soak or peak-load certification
 ## Measurable acceptance and regression evidence
 
 The final source/hash manifest and raw platform logs are recorded under
-[macOS manifest](../evidence/m3-macos-meta.json) and
-[Linux manifest](../evidence/m3-linux-meta.json), with adjacent raw logs. Saved text logs normalize trailing blank lines only.
+macOS manifest (`evidence/m3-macos-meta.json`) and
+Linux manifest (`evidence/m3-linux-meta.json`), with adjacent raw logs. Saved text logs normalize trailing blank lines only.
 
 - Full workspace Rust tests: **117 passing test executions**, 111 distinct bodies
   (six bridge bodies also compile inside the private sessions fixture), three
@@ -201,8 +203,8 @@ The final source/hash manifest and raw platform logs are recorded under
 - Bridge credentials/grants/schema/trailing/oversized/partial input, nonreading
   peer, slow/killed JVM, saturation/backpressure and registration cleanup pass.
   Low-file-descriptor listener fault recovery preserves existing connections and
-  resumes status service. [Bridge faults](../evidence/m3-bridge-faults.json),
-  [listener recovery](../evidence/m3-listener-recovery.json).
+  resumes status service. Bridge faults (`evidence/m3-bridge-faults.json`),
+  listener recovery (`evidence/m3-listener-recovery.json`).
 - Independent official 26.3 wire and actual Paper 1.19.4 arithmetic checks pass.
 - Fresh Linux arm64/musl passed all ten recorded checks: fmt, workspace tests,
   strict Clippy, release examples/binary, Java integration, both real-Java Play/PvP

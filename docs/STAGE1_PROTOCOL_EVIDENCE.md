@@ -1,10 +1,12 @@
 # Stage 1 protocol evidence — Java Edition 26.3 / 777
 
+Original capture filenames refer to the [local validation archive](../evidence/README.md).
+
 Checked 2026-10-29. This covers only M1A and the terminal login rejection.
 No reference source code or game assets are redistributed. File paths below
 are relative to the supplied private `unz/`. SHA-256 pins of inspected files
 and the installed client's official manifest/JAR SHA-1 are in
-[`protocol-sources.json`](../evidence/protocol-sources.json).
+`protocol-sources.json` (`evidence/protocol-sources.json`).
 
 ## Observed local reference behavior
 
@@ -76,8 +78,8 @@ loopback client, validates JSON and exact pong bytes, and exercises fragmented a
 coalesced delivery. It does not reuse the server codec to build requests.
 
 The user confirmed stock 26.3 server-list display, ping bars and the readable
-login rejection. See [`vanilla-client-check.json`](../evidence/vanilla-client-check.json)
-and [`vanilla-server.log`](../evidence/vanilla-server.log). The agent could not
+login rejection. See `vanilla-client-check.json` (`evidence/vanilla-client-check.json`)
+and `vanilla-server.log` (`evidence/vanilla-server.log`). The agent could not
 inspect Java's window through its UI tool; the observation is explicitly
 user-reported. The installed client JAR was checked against its official manifest.
 

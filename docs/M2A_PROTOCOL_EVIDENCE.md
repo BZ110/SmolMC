@@ -1,5 +1,7 @@
 # M2A protocol evidence — isolated instances
 
+Original capture filenames refer to the [local validation archive](../evidence/README.md).
+
 Date: 2026-10-29 (America/Toronto). Protocol **777 / Java Edition 26.3**.
 Status: M2A accepted following user-reported real stock 26.3 client verification,
 supplementing the automated post-authentication wire evidence. The user reports
@@ -10,7 +12,7 @@ No new agent-captured stock trace or visual recording is claimed.
 ## Source evidence and unchanged layouts
 
 No packet ID, field, registry asset, NBT layout, compression setting or authentication
-mode was added. [M1D preservation hashes](../evidence/m2a-m1d-preservation.json)
+mode was added. M1D preservation hashes (`evidence/m2a-m1d-preservation.json`)
 compare current auth, network, protocol and chunk files/manifests with the final
 M1D implementation inventory; every compared file is byte-identical. Pinned
 field/path evidence remains in [M1C](M1C_PROTOCOL_EVIDENCE.md) and
@@ -53,7 +55,7 @@ to B. A receives two teleports, 25 unloads and 50 chunks; A then sees B/D, C see
 nobody, B sees A/D. Occupied reset/destroy are rejected. After clients close,
 reset expires handles, destruction rejects edits, and connections/replicas/edges/
 frame leases return to zero without protocol errors, timeouts or task failures.
-See [regression output](../evidence/m2a-tests.txt).
+See regression output (`evidence/m2a-tests.txt`).
 
 The boundary is **post-authentication Play** with synthetic identities and a fixed
 test-only key. It does not exercise Handshake/Login/Configuration, Mojang session

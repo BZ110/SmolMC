@@ -1,0 +1,23 @@
+{
+  "baseline_rss_kib": 7488,
+  "merge_conserved_items": 1000,
+  "method": "Release in-process item owner microprobe: one active viewer, default budgets, real spatial merge/pickup and bounded queue drains; no socket encryption/client rendering. RSS is whole test-process KiB; allocation/page granularity applies. 100 settled processing passes per size, no sleep or idle CPU claim.",
+  "pickup_1000_processing_us": 199.75,
+  "pickup_conserved_items": 1000,
+  "remaining_merged_entities": 16,
+  "rows": [
+    {
+      "increment_from_baseline_kib": 624,
+      "items": 100,
+      "rss_kib": 8112,
+      "settled_tick_mean_us": 15.25
+    },
+    {
+      "increment_from_baseline_kib": 1440,
+      "items": 1000,
+      "rss_kib": 8928,
+      "settled_tick_mean_us": 126.10792
+    }
+  ],
+  "spawn_and_merge_1000_us": 1424.2079999999999
+}

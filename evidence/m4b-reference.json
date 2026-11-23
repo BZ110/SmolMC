@@ -1,0 +1,23 @@
+{
+  "result": "PASS",
+  "checks": [
+    "PASS ClientboundUpdateAttributesPacket exact vanilla decode/re-encode",
+    "PASS ClientboundContainerSetContentPacket exact vanilla decode/re-encode",
+    "PASS ClientboundAddEntityPacket exact vanilla decode/re-encode",
+    "PASS ClientboundSetEntityDataPacket exact vanilla decode/re-encode",
+    "PASS ClientboundSetEntityDataPacket exact vanilla decode/re-encode",
+    "PASS ClientboundSetEquipmentPacket exact vanilla decode/re-encode",
+    "PASS ClientboundTakeItemEntityPacket exact vanilla decode/re-encode",
+    "PASS ClientboundEntityPositionSyncPacket exact vanilla decode/re-encode",
+    "PASS ClientboundRemoveEntitiesPacket exact vanilla decode/re-encode",
+    "PASS actual LivingEntity knockback resistance matches 12 Rust vectors; five grass/solid replacement flags",
+    "PASS actual armor mitigation 72 vectors and seven actual durability/break transitions"
+  ],
+  "minecraft_jar_sha256": "4508d006323f24fa02876310c192d739af56516eb259000ac50f0909a68c9a2d",
+  "corpus_sha256": {
+    "items-vectors.bin": "15b269fadf3d86481367a5809645c0aa1bb1803b4aed85a44021cab2fe6f7d40",
+    "items-math.json": "cfa7c5a3876fdfd9d7466c33988347ea280c6ac46d60e43a297dc417c50fdd9f"
+  },
+  "scope": "Actual 26.3 codec exact decode/consume/re-encode and stack/item metadata semantics; 72 Rust armor outputs vs actual CombatRules; gear durability/count/cost facts and seven actual applyDamage break transitions. No full server tick, loot-engine, GUI/auth/render or client acceptance claim.",
+  "diagnostic": ""
+}

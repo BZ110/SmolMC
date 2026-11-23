@@ -1,5 +1,7 @@
 # M4A — Real Worlds, Block Interactions & Terrain Physics
 
+Original capture filenames refer to the [local validation archive](../evidence/README.md).
+
 2026-10-30. Final checkpoint: `m4a-validated`. Rollback checkpoint:
 `m4a-before` → `3f83f7d` (`m3-pvp-validated`). M4A is implemented and user-accepted.
 No M4B, plugin ecosystem, broad survival, Bukkit/Paper compatibility or M5 work.
@@ -86,10 +88,10 @@ fixture coverage without weakening player ingress security.
 
 ## Short resource measurements
 
-[Preserved M3 baseline](../evidence/m4a-before.json),
-[final imported-map runs](../evidence/m4a-after.json),
-[import/COW profile](../evidence/m4a-resources.json),
-[block latency histograms](../evidence/m4a-block-timing.json).
+Preserved M3 baseline (`evidence/m4a-before.json`),
+final imported-map runs (`evidence/m4a-after.json`),
+import/COW profile (`evidence/m4a-resources.json`),
+block latency histograms (`evidence/m4a-block-timing.json`).
 CPU is server PID percent of **one core**; RSS is peak sampled **KiB**. Client/JVM
 costs are excluded from these Rust-only cases. macOS arm64 release, one-second
 all-ready warmup and about eight seconds active/case. No long load sweep or soak.

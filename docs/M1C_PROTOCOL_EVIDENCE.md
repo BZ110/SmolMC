@@ -1,5 +1,7 @@
 # M1C protocol-777 evidence ledger
 
+Original capture filenames refer to the [local validation archive](../evidence/README.md).
+
 Date: 2026-10-29. Target: **Java Edition 26.3, protocol 777 only**.
 This extends [M1B's ledger](M1B_PROTOCOL_EVIDENCE.md); login, encryption,
 compression, legitimate session verification and Configuration are preserved.
@@ -8,7 +10,7 @@ compression, legitimate session verification and Configuration are preserved.
 
 **Observed reference behavior:** the user-provided local `unz/` archive's
 `version.json`, game/common protocol registration, packet readers/writers and
-nested codecs were inspected. [Source inventory](../evidence/m1c-protocol-sources.json)
+nested codecs were inspected. Source inventory (`evidence/m1c-protocol-sources.json`)
 pins 57 paths with SHA-256 hashes and derived facts. The packet ID basis is
 `evidence/m1b-packet-ids.json` (registration order, including protocol bundling
 rules), not an older wiki version. All paths below are relative to `unz/`.
@@ -16,7 +18,7 @@ No proprietary source body or registry/dimension asset is bundled.
 
 **Independent observation:** the stock signed-in 26.3 client rendered terrain,
 flew across multiple chunks and remained connected; see
-[client check](../evidence/m1c-vanilla-client-check.json). This proves the exercised
+client check (`evidence/m1c-vanilla-client-check.json`). This proves the exercised
 subset, not all legal inputs or full vanilla conformance.
 
 **Public corroboration limit:** access to the community packet wiki was denied

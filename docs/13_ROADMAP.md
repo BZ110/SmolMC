@@ -1,5 +1,10 @@
 # 13 — Practical roadmap: defer the ambitious parts
 
+M4B is the latest accepted milestone. See the [public roadmap](../ROADMAP.md) and
+[testing record](TESTED.md) for the current overview. Checkpoint labels refer to
+the same source milestones in the public history. Historical hashes in reports
+identify the original validation archive.
+
 **Historical revised M3 authorization (2026-10-29): M1A–M2C and replication optimization are complete (`m2c-validated`, `08fef9a`). The user explicitly replaces the original M3 with M3 — PvP Gameplay Foundation. Checkpoint `m3-pvp-before` preserves M2C. Implement this one vertical slice and stop.**
 
 ## R0 — Research, architecture, constraints (current deliverable)

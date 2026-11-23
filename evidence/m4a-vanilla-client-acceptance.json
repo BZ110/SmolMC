@@ -1,0 +1,42 @@
+{
+  "date": "2026-10-30",
+  "observer": "User-reported, two unmodified authenticated Java 26.3 clients at 127.0.0.1:25567. Agent did not operate or independently view game windows.",
+  "source_world": "maintainer-supplied Anvil save",
+  "result": "ACCEPTED by user after terrain/void/mining corrections",
+  "responses": [
+    {
+      "check": "Initial cropped-map/build prototype",
+      "quote": "Yeah so like not all the ground renders. ... When you hold left click on blocks you disconnect. ... Crit particles are spawning for sweep hits?",
+      "status": "Rejected; gaps/void recovery and feedback investigated; full-height import and confirmed-contact classification implemented"
+    },
+    {
+      "check": "Mining scope refinement",
+      "quote": "What I meant by interval is the time it takes to literally break every block. You need to hold down your mouse to break some blocks. ... Swords SHOULD be able to break blocks. They have their own timings however.",
+      "status": "User explicitly added narrow mining-duration/tool-timing support; drops/durability remain deferred"
+    },
+    {
+      "check": "First timed-mining build",
+      "quote": "it does not break at all now. Plants do though.",
+      "status": "Rejected; STOP_DESTROY_BLOCK is action 3, corrected and independently checked"
+    },
+    {
+      "check": "Corrected start/hold/finish, ground, connection stability, combat feedback",
+      "quote": "Yes! Everything works. Continue on.",
+      "status": "User acceptance of corrected build; broad response, not individually timed certification of every checklist item"
+    }
+  ],
+  "scope": "Initial checklist supplied world isolation, fresh/reset, reconnect, combat/death/respawn steps. Final user response is broad acceptance; automated fixtures supplement it. No claim of full survival, arbitrary map fidelity, every exact vanilla mechanic, or independent agent GUI observation.",
+  "binary_sha256_by_attempt": {
+    "client-check.json": "3e45551036db49677a451fd5cfab9f5ec57846e61f878872dfd2486ff5d111e8",
+    "client-check-attempt2.json": "fca47249b55313737f4734c1b7ccccb53b289191bf5bd9850a9748f7152b42de",
+    "client-check-attempt3.json": "464a88cd50c8ed6007fe40dc375128d1e85a6039aa0627396db26c065e21f3dc",
+    "client-check-attempt1.json": "84c4154742f6ea8d2d41f695f440e5802bee74c0f83767e785c65954e2e8d0e5"
+  },
+  "post_acceptance": "Watch-snapshot reads avoid catalog access in combat; bounded collision stack storage; shared immutable chunk packets and release of finished scratch; test-client receiver policy; cold Java controls and test instrumentation. Accepted combat functions/precision and mining equations preserved. Source hashes listed here were recorded after acceptance; final manifests identify exact validated sources separately. Final validation also checks safe join/reconnect, switch, respawn and void recovery against edited terrain; a bounded search requires actual body clearance/support. Reconnect regression and all Linux/macOS checks passed. CLI/status text was updated.",
+  "post_acceptance_source_hashes": {
+    "crates/sessions/src/gameplay.rs": "1cb53cf05fe7c0ef27095c728508b343b1ddc3865f36cf292896fd9d1df0d653",
+    "crates/sessions/src/replication/combat.rs": "84d3dae598779e608f5db68d32349d9581b55e4ca2ef638749598baea89f6451",
+    "crates/world/src/collision.rs": "99b8752edfc3e2195bcb2c83a19a6c4bb03779e4748546816668724809e90658"
+  },
+  "final_validated_binary_sha256": "5e51a016d62535a8124f9df83888bf27d3b0e55f4dd80aecf6d5b3fd03d04d68"
+}
